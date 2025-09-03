@@ -1,0 +1,18 @@
+[tool.poetry]
+name = "infoblox-eip"
+version = "0.1.0"
+description = "this package is used to collect vpc eip info from alibaba and azure china cloud"
+authors = ["Kai Yang <kaiyang939325@gmail.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.10"
+requests = "^2.32.5"
+aliyun-python-sdk-ecs = "^4.24.82"
+aliyun-python-sdk-core = "^2.16.0"
+aliyun-python-sdk-vpc = "^3.0.47"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
