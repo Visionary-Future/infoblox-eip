@@ -7,7 +7,7 @@ ECS_HEADER = [
     "ip_address",
     "mac_address",
     "EA-AliCloudVMName",
-    "EA-AliCloudVMId",
+    "EA-AliCloudVMID",
     "EA-AliCloudVMPublicIP",
     "EA-AliCloudVMOS",
     "EA-AliCloudFirstDiscovered",
@@ -16,9 +16,9 @@ ECS_HEADER = [
 ]
 
 VPC_HEADER = [
-    "HEADER-NetworkContainer",
-    "address",
-    "netmask",
+    "header-networkcontainer",
+    "address*",
+    "netmask*",
     "EA-AliCloudVPCID",
     "EA-AliCloudVPCName",
     "EA-AliCloudRegion",

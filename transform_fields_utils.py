@@ -19,7 +19,7 @@ def cidr_to_ip_netmask(cidr_string):
 def transform_ecs_instances(ecs_instances: List[Dict[str, Any]] = [], exists_data: List[Dict[str, str]]=[]) -> List[Dict[str, str]]:
     existing: Dict[str, Dict[str, str]] = {}
     for row in exists_data:
-        key = row.get("EA-AliCloudVMId", "")
+        key = row.get("EA-AliCloudVMID", "")
         existing[key] = row
     rows: List[Dict[str, str]] = []
     for ecs in ecs_instances:
@@ -137,29 +137,27 @@ def transform_ecs_instances(ecs_instances: List[Dict[str, Any]] = [], exists_dat
 def transform_vpcs(vpcs: List[Dict[str, Any]] = [], exists_data: List[Dict[str, str]]=[]) -> List[Dict[str, str]]:
     existing: Dict[Tuple[str, str], Dict[str, str]] = {}
     for row in exists_data:
-        key = (row.get("EA-AliCloudTenantID", ""), row.get("EA-AliCloudVPCID", ""))
-        existing[key] = row
+        existing[row.get("EA-AliCloudVPCID", "")] = row
     rows: List[Dict[str, str]] = []
 
     for vpc in vpcs:
         vpc_id = vpc.get("VpcId", "")
         tenant = vpc.get("OwnerId") or vpc.get("OwnerAccount") or ""
-        key = (tenant, vpc_id)
 
         first = now_iso()
         last = now_iso()
         cidr_block = vpc.get("CidrBlock", "0.0.0.0/8")
-        address, netmask = cidr_to_ip_netmask(cidr_block)
+        [address, netmask] = cidr_block.split("/")
 
-        if key in existing:
-            first = existing[key].get("EA-AliCloudFirstDiscovered", first)
+        if vpc_id in existing:
+            first = existing[vpc_id].get("EA-AliCloudFirstDiscovered", first)
             # update last discovered to now
             last = now_iso()
 
         row = {
-            "HEADER-NetworkContainer": "NetworkContainer",
-            "address": address or "",
-            "netmask": netmask or "",
+            "header-networkcontainer": "networkcontainer",
+            "address*": address or "",
+            "netmask*": int(netmask),
             "EA-AliCloudVPCID": vpc_id,
             "EA-AliCloudVPCName": vpc.get("VpcName", ""),
             "EA-AliCloudRegion": vpc.get("RegionId", ""),
