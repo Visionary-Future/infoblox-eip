@@ -124,7 +124,7 @@ def transform_ecs_instances(ecs_instances: List[Dict[str, Any]] = [], exists_dat
             "ip_address": private_ip,
             "mac_address": mac,
             "EA-AliCloudVMName": vm_name,
-            "EA-AliCloudVMId": vm_id,
+            "EA-AliCloudVMID": vm_id,
             "EA-AliCloudVMPublicIP": public_ip,
             "EA-AliCloudVMOS": guest_os,
             "EA-AliCloudFirstDiscovered": first,
