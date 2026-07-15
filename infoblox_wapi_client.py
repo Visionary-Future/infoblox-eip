@@ -46,6 +46,48 @@ class InfobloxWAPIClient:
         if not verify_ssl:
             urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
+    # ── Extensible Attribute 定义 ────────────────
+
+    # 所有用到的 EA 名称
+    REQUIRED_EA_DEFS = [
+        "EA-AliCloudVPCID",
+        "EA-AliCloudVPCName",
+        "EA-AliCloudRegion",
+        "EA-AliCloudTenantID",
+        "EA-AliCloudSubnetID",
+        "EA-AliCloudSubnetName",
+        "EA-AliCloudZone",
+        "EA-AliCloudVMID",
+        "EA-AliCloudVMName",
+        "EA-AliCloudVMPublicIP",
+        "EA-AliCloudVMOS",
+    ]
+
+    def ensure_extattr_defs(self):
+        """确保所有 EA 属性定义已存在, 不存在则创建 (type=STRING)"""
+        log.info("━━━ 检查/创建 Extensible Attribute 定义 ━━━")
+        for name in self.REQUIRED_EA_DEFS:
+            try:
+                existing = self._get("extensibleattributedef", params={"name": name})
+                if existing:
+                    log.info(f"  ⏭️  EA '{name}' 已存在")
+                    continue
+            except Exception:
+                pass
+            # 不存在, 创建
+            payload = {"name": name, "type": "STRING"}
+            try:
+                url = f"{self.api_base}/extensibleattributedef"
+                resp = self.session.post(url, json=payload, timeout=self.timeout)
+                if resp.status_code == 201:
+                    log.info(f"  ✅ 创建 EA '{name}'")
+                elif resp.status_code == 400 and "already exists" in resp.text.lower():
+                    log.info(f"  ⏭️  EA '{name}' 已存在")
+                else:
+                    log.error(f"  ❌ 创建 EA '{name}' HTTP {resp.status_code}: {resp.text[:200]}")
+            except Exception as e:
+                log.error(f"  ❌ 创建 EA '{name}' 失败: {e}")
+
     # ── 低层 HTTP ──────────────────────────────
 
     def _post(self, object_type: str, payload: dict) -> Optional[str]:

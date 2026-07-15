@@ -27,6 +27,9 @@ def push_to_infoblox(args, ecs_instances_raw, vpcs_raw, vswitches_raw):
         verify_ssl=not args.infoblox_no_verify_ssl,
     )
 
+    # 先确保所有 extattr 定义已存在
+    client.ensure_extattr_defs()
+
     # ── VPC -> networkcontainer ────────────────
     if vpcs_raw:
         log.info(f"━━━ 推送 {len(vpcs_raw)} 个 VPC 到 Infoblox (networkcontainer) ━━━")
