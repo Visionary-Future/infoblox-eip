@@ -195,7 +195,7 @@ if __name__ == '__main__':
     region_id = args.region
 
     if not args.access_key_id or not args.access_key_secret:
-        print("Please provide access_key_id and access_key_secret.")
+        log.error("Please provide access_key_id and access_key_secret (set ALIYUN_ACCESS_KEY_ID / ALIYUN_ACCESS_KEY_SECRET env vars).")
         sys.exit(1)
 
     # ── 1. 从阿里云采集数据 ──
@@ -212,7 +212,7 @@ if __name__ == '__main__':
     vpcs = aliyun_client.get_vpcs()
     log.info(f"  采集到 {len(vpcs)} 个 VPC")
 
-    vpc_ids = [vpc.get("VpcId", '') for vpc in vpcs]
+    vpc_ids = [vpc.get("VpcId", '') for vpc in vpcs if vpc.get("VpcId")]
     vswitches = aliyun_client.get_VSwitches(vpc_ids)
     log.info(f"  采集到 {len(vswitches)} 个 VSwitch")
 
