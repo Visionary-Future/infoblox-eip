@@ -16,8 +16,6 @@ from typing import Any, Dict, List, Optional
 
 import requests
 
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-
 log = logging.getLogger("infoblox-wapi")
 
 
@@ -30,7 +28,7 @@ class InfobloxWAPIClient:
         username: str,
         password: str,
         wapi_version: str = "2.13.6",
-        verify_ssl: bool = False,
+        verify_ssl: bool = True,
         timeout: int = 30,
         network_view: str = "default",
         dns_view: str = "default",
@@ -44,6 +42,9 @@ class InfobloxWAPIClient:
         self.session.auth = (username, password)
         self.session.verify = verify_ssl
         self.session.headers.update({"Content-Type": "application/json"})
+
+        if not verify_ssl:
+            urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
     # ── 低层 HTTP ──────────────────────────────
 

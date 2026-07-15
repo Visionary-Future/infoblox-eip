@@ -1,6 +1,7 @@
 import argparse
 import logging
 import os
+import sys
 
 from alicloud_utils import AliyunClient
 from csv_utils import read_csv, write_csv, ECS_HEADER, VPC_HEADER, VSWITCHE_HEADER
@@ -27,7 +28,7 @@ def push_to_infoblox(args, ecs_instances_raw, vpcs_raw, vswitches_raw):
     )
 
     # ── VPC -> networkcontainer ────────────────
-    if ecs_instances_raw or vpcs_raw:
+    if vpcs_raw:
         log.info(f"━━━ 推送 {len(vpcs_raw)} 个 VPC 到 Infoblox (networkcontainer) ━━━")
         for vpc in vpcs_raw:
             vpc_id = vpc.get("VpcId", "")
@@ -108,8 +109,6 @@ def _extract_private_ip(ecs: dict) -> str:
             for pip in candidate_ips:
                 if pip.get("Primary") or pip.get("Primary") is True:
                     return pip.get("PrivateIpAddress") or pip.get("PrivateIp") or ""
-        if not items[0].get("PrimaryIpAddress"):
-            pass
         first = items[0]
         ip = first.get("PrimaryIpAddress") or first.get("PrimaryIp") or ""
         if ip:
@@ -197,7 +196,7 @@ if __name__ == '__main__':
 
     if not args.access_key_id or not args.access_key_secret:
         print("Please provide access_key_id and access_key_secret.")
-        exit(1)
+        sys.exit(1)
 
     # ── 1. 从阿里云采集数据 ──
     aliyun_client = AliyunClient(
