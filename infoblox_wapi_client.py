@@ -59,8 +59,18 @@ class InfobloxWAPIClient:
         if resp.status_code == 400 and "already exists" in resp.text.lower():
             log.info(f"  ⏭️  {object_type} already exists, skipped")
             return None
+        # 400 其他错误: 打印详细错误信息, 不抛异常
+        if resp.status_code == 400:
+            try:
+                err = resp.json()
+                msg = err.get("text", "") or str(err)
+            except Exception:
+                msg = resp.text[:500]
+            log.error(f"  ❌ POST {object_type} 400: {msg}")
+            if "extensible" in msg.lower() or "attribute" in msg.lower():
+                log.error(f"  💡 请先在 Infoblox 中定义对应的 Extensible Attribute")
+            return None
         log.error(f"  ❌ POST {object_type} HTTP {resp.status_code}: {resp.text[:300]}")
-        resp.raise_for_status()
         return None
 
     def _get(self, object_type: str, params: dict = None) -> list:
@@ -84,11 +94,28 @@ class InfobloxWAPIClient:
         self, object_type: str, attr_name: str, attr_value: str,
         return_fields: List[str] = None,
     ) -> List[dict]:
-        """通过扩展属性查询: GET /<obj>?*<attr>=<value>"""
-        params = {f"*{attr_name}": attr_value}
+        """通过扩展属性查询: GET /<obj>?*<attr>=<value>
+
+        注意: requests 会把 * 编码成 %2A, Infoblox 需要 * 原样出现在 URL 中,
+        所以这里手动拼接 query string。
+        如果 extattr 未定义或查询出错, 返回空列表 (视为不存在)。
+        """
+        import urllib.parse
+        qs_parts = [f"*{urllib.parse.quote(attr_name, safe='')}={urllib.parse.quote(attr_value, safe='')}"]
         if return_fields:
-            params["_return_fields"] = ",".join(return_fields)
-        return self._get(object_type, params=params)
+            qs_parts.append(f"_return_fields={','.join(return_fields)}")
+        url = f"{self.api_base}/{object_type}?{'&'.join(qs_parts)}"
+        try:
+            resp = self.session.get(url, timeout=self.timeout)
+            if resp.status_code == 400:
+                # extattr 未定义或不可搜索, 视为不存在
+                log.debug(f"  extattr search 400 for {attr_name}={attr_value}: {resp.text[:200]}")
+                return []
+            resp.raise_for_status()
+            return resp.json()
+        except Exception as e:
+            log.debug(f"  extattr search failed for {attr_name}={attr_value}: {e}")
+            return []
 
     # ── VPC -> networkcontainer ────────────────
 
