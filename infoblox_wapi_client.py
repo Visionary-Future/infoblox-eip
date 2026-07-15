@@ -179,11 +179,11 @@ class InfobloxWAPIClient:
                 "EA-AliCloudVPCID": {"value": vpc_id},
             },
         }
-        # 无原生字段可用的放 extattrs
+        # 无原生字段可用的放 extattrs (空值跳过, Infoblox 不接受空 extattr value)
         if region:
             payload["extattrs"]["EA-AliCloudRegion"] = {"value": region}
         if tenant_id:
-            payload["extattrs"]["EA-AliCloudTenantID"] = {"value": tenant_id}
+            payload["extattrs"]["EA-AliCloudTenantID"] = {"value": str(tenant_id)}
 
         return self._post("networkcontainer", payload)
 
@@ -235,7 +235,7 @@ class InfobloxWAPIClient:
         if region:
             payload["extattrs"]["EA-AliCloudRegion"] = {"value": region}
         if tenant_id:
-            payload["extattrs"]["EA-AliCloudTenantID"] = {"value": tenant_id}
+            payload["extattrs"]["EA-AliCloudTenantID"] = {"value": str(tenant_id)}
 
         return self._post("network", payload)
 
@@ -271,6 +271,35 @@ class InfobloxWAPIClient:
         if existing:
             log.info(f"  ⏭️  ECS {vm_id} already exists -> {existing[0]['_ref']}")
             return existing[0]["_ref"]
+
+        # 检查父网络是否存在 (fixedaddress 必须属于一个已存在的 network)
+        # 从私网 IP 推算可能的网段: 尝试 /24 和 /16
+        import ipaddress
+        ip_obj = ipaddress.ip_address(private_ip)
+        net_24 = str(ipaddress.ip_network(f"{private_ip}/24", strict=False))
+        net_16 = str(ipaddress.ip_network(f"{private_ip}/16", strict=False))
+        parent_exists = False
+        for cidr in [net_24, net_16]:
+            parent = self._search_native(
+                "network",
+                {"network": cidr, "network_view": self.network_view},
+            )
+            if parent:
+                parent_exists = True
+                break
+        # 也检查 networkcontainer
+        if not parent_exists:
+            for cidr in [net_24, net_16]:
+                parent = self._search_native(
+                    "networkcontainer",
+                    {"network": cidr, "network_view": self.network_view},
+                )
+                if parent:
+                    parent_exists = True
+                    break
+        if not parent_exists:
+            log.warning(f"  ⚠️  ECS {vm_id} ({private_ip}): parent network not found, skipped (push VPC/VSwitch first)")
+            return None
 
         # comment 拼接
         comment_parts = [f"VMID: {vm_id}"]
