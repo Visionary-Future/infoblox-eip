@@ -1,13 +1,13 @@
 # -*- coding: utf-8 -*-
-"""Infoblox WAPI 客户端 — 将阿里云采集的 VPC / VSwitch / ECS(EIP) 数据推送到 Infoblox
+"""Infoblox WAPI 客户端 - 将阿里云采集的 VPC / VSwitch / ECS(EIP) 数据推送到 Infoblox
 
 支持的对象:
   - VPC       -> networkcontainer  (POST /wapi/v2.13.6/networkcontainer)
   - VSwitch   -> network            (POST /wapi/v2.13.6/network)
   - ECS/EIP   -> fixedaddress       (POST /wapi/v2.13.6/fixedaddress)
 
-所有云属性通过 extattrs (Extensible Attributes) 写入。
-推送前自动通过 extattrs 去重，已存在则跳过。
+字段策略: 能用原生字段的尽量用原生, 用不了的放 extattrs。
+去重: 通过原生字段 (network / ipv4addr + network_view) 查询。
 """
 
 import logging
@@ -48,19 +48,15 @@ class InfobloxWAPIClient:
 
     # ── Extensible Attribute 定义 ────────────────
 
-    # 所有用到的 EA 名称
+    # 仅保留无法映射到原生字段的 EA
     REQUIRED_EA_DEFS = [
-        "EA-AliCloudVPCID",
-        "EA-AliCloudVPCName",
-        "EA-AliCloudRegion",
-        "EA-AliCloudTenantID",
-        "EA-AliCloudSubnetID",
-        "EA-AliCloudSubnetName",
-        "EA-AliCloudZone",
-        "EA-AliCloudVMID",
-        "EA-AliCloudVMName",
-        "EA-AliCloudVMPublicIP",
-        "EA-AliCloudVMOS",
+        "EA-AliCloudVPCID",       # VPC ID - 无原生字段, 需结构化搜索
+        "EA-AliCloudSubnetID",    # VSwitch ID - 无原生字段, 需结构化搜索
+        "EA-AliCloudVMID",        # VM ID - 无原生字段, 需结构化搜索
+        "EA-AliCloudVMPublicIP",  # EIP - 无原生字段
+        "EA-AliCloudRegion",      # Region - network/networkcontainer 无原生字段
+        "EA-AliCloudTenantID",    # Tenant ID - 无原生字段
+        "EA-AliCloudZone",        # Zone - 无原生字段
     ]
 
     def ensure_extattr_defs(self):
@@ -74,7 +70,6 @@ class InfobloxWAPIClient:
                     continue
             except Exception:
                 pass
-            # 不存在, 创建
             payload = {"name": name, "type": "STRING"}
             try:
                 url = f"{self.api_base}/extensibleattributedef"
@@ -97,11 +92,9 @@ class InfobloxWAPIClient:
             ref = resp.text.strip().strip('"')
             log.info(f"  ✅ Created {object_type} -> {ref}")
             return ref
-        # 400 + already exists
         if resp.status_code == 400 and "already exists" in resp.text.lower():
             log.info(f"  ⏭️  {object_type} already exists, skipped")
             return None
-        # 400 其他错误: 打印详细错误信息, 不抛异常
         if resp.status_code == 400:
             try:
                 err = resp.json()
@@ -132,31 +125,18 @@ class InfobloxWAPIClient:
         resp = self.session.delete(url, timeout=self.timeout)
         resp.raise_for_status()
 
-    def _search_by_extattr(
-        self, object_type: str, attr_name: str, attr_value: str,
+    def _search_native(
+        self, object_type: str, search_fields: dict,
         return_fields: List[str] = None,
     ) -> List[dict]:
-        """通过扩展属性查询: GET /<obj>?*<attr>=<value>
-
-        注意: requests 会把 * 编码成 %2A, Infoblox 需要 * 原样出现在 URL 中,
-        所以这里手动拼接 query string。
-        如果 extattr 未定义或查询出错, 返回空列表 (视为不存在)。
-        """
-        import urllib.parse
-        qs_parts = [f"*{urllib.parse.quote(attr_name, safe='')}={urllib.parse.quote(attr_value, safe='')}"]
+        """通过原生字段查询去重: GET /<obj>?field1=val1&field2=val2"""
+        params = dict(search_fields)
         if return_fields:
-            qs_parts.append(f"_return_fields={','.join(return_fields)}")
-        url = f"{self.api_base}/{object_type}?{'&'.join(qs_parts)}"
+            params["_return_fields"] = ",".join(return_fields)
         try:
-            resp = self.session.get(url, timeout=self.timeout)
-            if resp.status_code == 400:
-                # extattr 未定义或不可搜索, 视为不存在
-                log.debug(f"  extattr search 400 for {attr_name}={attr_value}: {resp.text[:200]}")
-                return []
-            resp.raise_for_status()
-            return resp.json()
+            return self._get(object_type, params=params)
         except Exception as e:
-            log.debug(f"  extattr search failed for {attr_name}={attr_value}: {e}")
+            log.debug(f"  native search failed: {e}")
             return []
 
     # ── VPC -> networkcontainer ────────────────
@@ -171,27 +151,35 @@ class InfobloxWAPIClient:
     ) -> Optional[str]:
         """推送 VPC 为 networkcontainer 对象
 
-        WAPI 端点: POST /wapi/v2.13.6/networkcontainer
-        必填: network (CIDR)
+        原生字段: network, comment
+        extattrs: EA-AliCloudVPCID, EA-AliCloudRegion, EA-AliCloudTenantID
+        去重: network + network_view
         """
-        # 去重
-        existing = self._search_by_extattr(
-            "networkcontainer", "EA-AliCloudVPCID", vpc_id,
-            return_fields=["extattrs"],
+        # 原生字段去重
+        existing = self._search_native(
+            "networkcontainer",
+            {"network": cidr_block, "network_view": self.network_view},
         )
         if existing:
             log.info(f"  ⏭️  VPC {vpc_id} already exists -> {existing[0]['_ref']}")
             return existing[0]["_ref"]
 
+        # comment 拼接人类可读信息
+        comment_parts = [f"VPC: {vpc_name} ({vpc_id})"]
+        if region:
+            comment_parts.append(f"Region: {region}")
+        if tenant_id:
+            comment_parts.append(f"Tenant: {tenant_id}")
+
         payload: Dict[str, Any] = {
             "network": cidr_block,
             "network_view": self.network_view,
-            "comment": f"VPC: {vpc_name} ({vpc_id})",
+            "comment": " | ".join(comment_parts),
             "extattrs": {
-                "EA-AliCloudVPCID":   {"value": vpc_id},
-                "EA-AliCloudVPCName": {"value": vpc_name},
+                "EA-AliCloudVPCID": {"value": vpc_id},
             },
         }
+        # 无原生字段可用的放 extattrs
         if region:
             payload["extattrs"]["EA-AliCloudRegion"] = {"value": region}
         if tenant_id:
@@ -213,31 +201,39 @@ class InfobloxWAPIClient:
     ) -> Optional[str]:
         """推送 VSwitch 为 network 对象
 
-        WAPI 端点: POST /wapi/v2.13.6/network
-        必填: network (CIDR)
+        原生字段: network, comment
+        extattrs: EA-AliCloudSubnetID, EA-AliCloudVPCID, EA-AliCloudZone, EA-AliCloudRegion, EA-AliCloudTenantID
+        去重: network + network_view
         """
-        existing = self._search_by_extattr(
-            "network", "EA-AliCloudSubnetID", vswitch_id,
-            return_fields=["extattrs"],
+        existing = self._search_native(
+            "network",
+            {"network": cidr_block, "network_view": self.network_view},
         )
         if existing:
             log.info(f"  ⏭️  VSwitch {vswitch_id} already exists -> {existing[0]['_ref']}")
             return existing[0]["_ref"]
 
+        comment_parts = [f"VSwitch: {vswitch_name} ({vswitch_id})", f"VPC: {vpc_id}"]
+        if zone:
+            comment_parts.append(f"Zone: {zone}")
+        if region:
+            comment_parts.append(f"Region: {region}")
+        if tenant_id:
+            comment_parts.append(f"Tenant: {tenant_id}")
+
         payload: Dict[str, Any] = {
             "network": cidr_block,
             "network_view": self.network_view,
-            "comment": f"VSwitch: {vswitch_name} ({vswitch_id})",
+            "comment": " | ".join(comment_parts),
             "extattrs": {
-                "EA-AliCloudSubnetID":   {"value": vswitch_id},
-                "EA-AliCloudSubnetName": {"value": vswitch_name},
-                "EA-AliCloudVPCID":      {"value": vpc_id},
+                "EA-AliCloudSubnetID": {"value": vswitch_id},
+                "EA-AliCloudVPCID":     {"value": vpc_id},
             },
         }
-        if region:
-            payload["extattrs"]["EA-AliCloudRegion"] = {"value": region}
         if zone:
             payload["extattrs"]["EA-AliCloudZone"] = {"value": zone}
+        if region:
+            payload["extattrs"]["EA-AliCloudRegion"] = {"value": region}
         if tenant_id:
             payload["extattrs"]["EA-AliCloudTenantID"] = {"value": tenant_id}
 
@@ -258,45 +254,60 @@ class InfobloxWAPIClient:
     ) -> Optional[str]:
         """推送 ECS 实例为 fixedaddress 对象
 
-        WAPI 端点: POST /wapi/v2.13.6/fixedaddress
-        必填: ipv4addr, mac (或 match_client=MATCH_CLIENT)
+        原生字段: ipv4addr, name, mac, device_type, device_vendor,
+                  device_location, device_description, comment
+        extattrs: EA-AliCloudVMID, EA-AliCloudVMPublicIP, EA-AliCloudVPCID
+        去重: ipv4addr + network_view
         """
         if not private_ip:
             log.warning(f"  ⚠️  ECS {vm_id} has no private IP, skipped")
             return None
 
-        existing = self._search_by_extattr(
-            "fixedaddress", "EA-AliCloudVMID", vm_id,
-            return_fields=["extattrs"],
+        # 原生字段去重
+        existing = self._search_native(
+            "fixedaddress",
+            {"ipv4addr": private_ip, "network_view": self.network_view},
         )
         if existing:
             log.info(f"  ⏭️  ECS {vm_id} already exists -> {existing[0]['_ref']}")
             return existing[0]["_ref"]
 
+        # comment 拼接
+        comment_parts = [f"VMID: {vm_id}"]
+        if public_ip:
+            comment_parts.append(f"EIP: {public_ip}")
+        if vpc_id:
+            comment_parts.append(f"VPC: {vpc_id}")
+
         payload: Dict[str, Any] = {
             "ipv4addr": private_ip,
             "network_view": self.network_view,
             "name": vm_name or f"vm-{vm_id}",
-            "comment": f"ECS: {vm_name} ({vm_id})" + (f" EIP: {public_ip}" if public_ip else ""),
-            "extattrs": {
-                "EA-AliCloudVMID":   {"value": vm_id},
-                "EA-AliCloudVMName": {"value": vm_name},
-            },
+            "comment": " | ".join(comment_parts),
+            # ── 原生字段优先 ──
+            "device_type": "ECS",
+            "device_vendor": "Alibaba Cloud",
         }
 
-        # mac 处理: fixedaddress 要求 mac 或 match_client
+        # mac 处理
         if mac_address:
             payload["mac"] = mac_address
         else:
             payload["match_client"] = "RESERVED"
 
+        # 原生字段: 有对应关系的直接用
+        if os_name:
+            payload["device_description"] = os_name
+        if region:
+            payload["device_location"] = region
+
+        # extattrs: 仅放无原生字段可用的数据
+        payload["extattrs"] = {
+            "EA-AliCloudVMID": {"value": vm_id},
+        }
         if public_ip:
             payload["extattrs"]["EA-AliCloudVMPublicIP"] = {"value": public_ip}
-        if os_name:
-            payload["extattrs"]["EA-AliCloudVMOS"] = {"value": os_name}
         if vpc_id:
             payload["extattrs"]["EA-AliCloudVPCID"] = {"value": vpc_id}
-        if region:
-            payload["extattrs"]["EA-AliCloudRegion"] = {"value": region}
 
         return self._post("fixedaddress", payload)
