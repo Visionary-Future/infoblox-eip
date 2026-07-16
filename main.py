@@ -41,24 +41,42 @@ def push_to_infoblox(args, ecs_instances_raw, vpcs_raw, vswitches_raw):
             tenant = vpc.get("OwnerId") or vpc.get("OwnerAccount") or ""
             if vpc_id and cidr_block:
                 try:
-                    client.push_vpc(vpc_id, vpc_name, cidr_block, region, tenant)
+                    client.push_vpc(
+                        vpc_id=vpc_id,
+                        vpc_name=vpc_name,
+                        cidr_block=cidr_block,
+                        region=region,
+                        tenant_id=tenant,
+                    )
                 except Exception as e:
                     log.error(f"  ❌ VPC {vpc_id} push failed: {e}")
 
     # ── VSwitch -> network ─────────────────────
     if vswitches_raw:
+        # 构建 vpc_id -> vpc_name 映射
+        vpc_name_map = {v.get("VpcId", ""): v.get("VpcName", "") for v in vpcs_raw}
         log.info(f"━━━ 推送 {len(vswitches_raw)} 个 VSwitch 到 Infoblox (network) ━━━")
         for vsw in vswitches_raw:
             vsw_id = vsw.get("VSwitchId", "")
             vsw_name = vsw.get("VSwitchName", "")
             cidr_block = vsw.get("CidrBlock", "")
             vpc_id = vsw.get("VpcId", "")
+            vpc_name = vpc_name_map.get(vpc_id, "")
             region = vsw.get("RegionId", "") or args.region
             zone = vsw.get("ZoneId", "")
             tenant = vsw.get("OwnerId") or vsw.get("OwnerAccount") or ""
             if vsw_id and cidr_block:
                 try:
-                    client.push_vswitch(vsw_id, vsw_name, cidr_block, vpc_id, region, zone, tenant)
+                    client.push_vswitch(
+                        vswitch_id=vsw_id,
+                        vswitch_name=vsw_name,
+                        cidr_block=cidr_block,
+                        vpc_id=vpc_id,
+                        vpc_name=vpc_name,
+                        region=region,
+                        zone=zone,
+                        tenant_id=tenant,
+                    )
                 except Exception as e:
                     log.error(f"  ❌ VSwitch {vsw_id} push failed: {e}")
 
@@ -87,7 +105,6 @@ def push_to_infoblox(args, ecs_instances_raw, vpcs_raw, vswitches_raw):
                         mac_address=mac,
                         os_name=os_name,
                         vpc_id=vpc_id,
-                        region=args.region,
                     )
                 except Exception as e:
                     log.error(f"  ❌ ECS {vm_id} push failed: {e}")
