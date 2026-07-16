@@ -75,52 +75,27 @@ class InfobloxWAPIClient:
         "EA-AliCloudVMOS",
     ]
 
-    # 每个 EA 关联到哪些对象类型 (用 Infoblox 显示名, 不是 WAPI 对象名)
-    EA_OBJECT_TYPES = {
-        "EA-AliCloudVPCID":            ["IPv4 Network Container", "IPv4 Network", "Fixed Address"],
-        "EA-AliCloudVPCName":          ["IPv4 Network Container", "IPv4 Network"],
-        "EA-AliCloudRegion":           ["IPv4 Network Container", "IPv4 Network", "Fixed Address"],
-        "EA-AliCloudTenantID":         ["IPv4 Network Container", "IPv4 Network", "Fixed Address"],
-        "EA-AliCloudFirstDiscovered":  ["IPv4 Network Container", "IPv4 Network", "Fixed Address"],
-        "EA-AliCloudLastDiscovered":   ["IPv4 Network Container", "IPv4 Network", "Fixed Address"],
-        "EA-AliCloudSubnetID":         ["IPv4 Network"],
-        "EA-AliCloudSubnetName":       ["IPv4 Network"],
-        "EA-AliCloudZone":             ["IPv4 Network"],
-        "EA-AliCloudVMID":             ["Fixed Address"],
-        "EA-AliCloudVMName":           ["Fixed Address"],
-        "EA-AliCloudVMPublicIP":       ["Fixed Address"],
-        "EA-AliCloudVMOS":             ["Fixed Address"],
-    }
-
     def ensure_extattr_defs(self):
-        """确保所有 EA 属性定义已存在, 不存在则创建 (type=STRING, 带 allowed_object_types)"""
+        """确保所有 EA 属性定义已存在, 不存在则创建 (type=STRING)
+
+        注意: 不设 allowed_object_types, 不同 NIOS 版本对其取值要求不同,
+        不设时 EA 默认可关联所有对象类型, 不影响使用。
+        """
         log.info("━━━ 检查/创建 Extensible Attribute 定义 ━━━")
         for name in self.REQUIRED_EA_DEFS:
-            allowed_types = self.EA_OBJECT_TYPES.get(name, [])
             try:
-                existing = self._get("extensibleattributedef", params={"name": name, "_return_fields": "name,type,allowed_object_types"})
+                existing = self._get("extensibleattributedef", params={"name": name})
                 if existing:
                     log.info(f"  ⏭️  EA '{name}' 已存在")
-                    # 检查是否需要补充 allowed_object_types
-                    existing_types = existing[0].get("allowed_object_types", [])
-                    if allowed_types and set(allowed_types) - set(existing_types):
-                        log.info(f"  🔄 更新 EA '{name}' 的 allowed_object_types")
-                        ref = existing[0]["_ref"]
-                        try:
-                            self._put(ref, {"allowed_object_types": allowed_types})
-                        except Exception:
-                            pass
                     continue
             except Exception:
                 pass
             payload = {"name": name, "type": "STRING"}
-            if allowed_types:
-                payload["allowed_object_types"] = allowed_types
             try:
                 url = f"{self.api_base}/extensibleattributedef"
                 resp = self.session.post(url, json=payload, timeout=self.timeout)
                 if resp.status_code == 201:
-                    log.info(f"  ✅ 创建 EA '{name}' (types: {allowed_types})")
+                    log.info(f"  ✅ 创建 EA '{name}'")
                 elif resp.status_code == 400 and "already exists" in resp.text.lower():
                     log.info(f"  ⏭️  EA '{name}' 已存在")
                 else:
