@@ -75,23 +75,52 @@ class InfobloxWAPIClient:
         "EA-AliCloudVMOS",
     ]
 
+    # 每个 EA 关联到哪些对象类型
+    EA_OBJECT_TYPES = {
+        "EA-AliCloudVPCID":            ["networkcontainer", "network", "fixedaddress"],
+        "EA-AliCloudVPCName":          ["networkcontainer", "network"],
+        "EA-AliCloudRegion":           ["networkcontainer", "network", "fixedaddress"],
+        "EA-AliCloudTenantID":         ["networkcontainer", "network", "fixedaddress"],
+        "EA-AliCloudFirstDiscovered":  ["networkcontainer", "network", "fixedaddress"],
+        "EA-AliCloudLastDiscovered":   ["networkcontainer", "network", "fixedaddress"],
+        "EA-AliCloudSubnetID":         ["network"],
+        "EA-AliCloudSubnetName":       ["network"],
+        "EA-AliCloudZone":             ["network"],
+        "EA-AliCloudVMID":             ["fixedaddress"],
+        "EA-AliCloudVMName":           ["fixedaddress"],
+        "EA-AliCloudVMPublicIP":       ["fixedaddress"],
+        "EA-AliCloudVMOS":             ["fixedaddress"],
+    }
+
     def ensure_extattr_defs(self):
-        """确保所有 EA 属性定义已存在, 不存在则创建 (type=STRING)"""
+        """确保所有 EA 属性定义已存在, 不存在则创建 (type=STRING, 带 allowed_object_types)"""
         log.info("━━━ 检查/创建 Extensible Attribute 定义 ━━━")
         for name in self.REQUIRED_EA_DEFS:
+            allowed_types = self.EA_OBJECT_TYPES.get(name, [])
             try:
-                existing = self._get("extensibleattributedef", params={"name": name})
+                existing = self._get("extensibleattributedef", params={"name": name, "_return_fields": "name,type,allowed_object_types"})
                 if existing:
                     log.info(f"  ⏭️  EA '{name}' 已存在")
+                    # 检查是否需要补充 allowed_object_types
+                    existing_types = existing[0].get("allowed_object_types", [])
+                    if allowed_types and set(allowed_types) - set(existing_types):
+                        log.info(f"  🔄 更新 EA '{name}' 的 allowed_object_types")
+                        ref = existing[0]["_ref"]
+                        try:
+                            self._put(ref, {"allowed_object_types": allowed_types})
+                        except Exception:
+                            pass
                     continue
             except Exception:
                 pass
             payload = {"name": name, "type": "STRING"}
+            if allowed_types:
+                payload["allowed_object_types"] = allowed_types
             try:
                 url = f"{self.api_base}/extensibleattributedef"
                 resp = self.session.post(url, json=payload, timeout=self.timeout)
                 if resp.status_code == 201:
-                    log.info(f"  ✅ 创建 EA '{name}'")
+                    log.info(f"  ✅ 创建 EA '{name}' (types: {allowed_types})")
                 elif resp.status_code == 400 and "already exists" in resp.text.lower():
                     log.info(f"  ⏭️  EA '{name}' 已存在")
                 else:
@@ -211,10 +240,12 @@ class InfobloxWAPIClient:
             # 保留原有 FirstDiscovered
             first_discovered = self._get_existing_first_discovered(existing[0]) or now
             log.info(f"  🔄 Updating {object_type} -> {ref}")
+            log.debug(f"  existing extattrs: {existing[0].get('extattrs', {})}")
 
             extattr_fields["EA-AliCloudFirstDiscovered"] = first_discovered
             extattr_fields["EA-AliCloudLastDiscovered"] = now
             extattrs = self._build_extattrs(extattr_fields)
+            log.debug(f"  new extattrs to PUT: {extattrs}")
 
             put_payload: Dict[str, Any] = {
                 "comment": comment,
@@ -223,12 +254,15 @@ class InfobloxWAPIClient:
             updated_ref = self._put(ref, put_payload)
             if updated_ref:
                 log.info(f"  ✅ Updated -> {updated_ref}")
+            else:
+                log.error(f"  ❌ PUT failed for {ref}")
             return updated_ref or ref
 
         # 新建
         extattr_fields["EA-AliCloudFirstDiscovered"] = now
         extattr_fields["EA-AliCloudLastDiscovered"] = now
         extattrs = self._build_extattrs(extattr_fields)
+        log.debug(f"  new extattrs to POST: {extattrs}")
 
         payload = dict(base_payload)
         payload["comment"] = comment
