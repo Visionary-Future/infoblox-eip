@@ -75,21 +75,21 @@ class InfobloxWAPIClient:
         "EA-AliCloudVMOS",
     ]
 
-    # 每个 EA 关联到哪些对象类型
+    # 每个 EA 关联到哪些对象类型 (用 Infoblox 显示名, 不是 WAPI 对象名)
     EA_OBJECT_TYPES = {
-        "EA-AliCloudVPCID":            ["networkcontainer", "network", "fixedaddress"],
-        "EA-AliCloudVPCName":          ["networkcontainer", "network"],
-        "EA-AliCloudRegion":           ["networkcontainer", "network", "fixedaddress"],
-        "EA-AliCloudTenantID":         ["networkcontainer", "network", "fixedaddress"],
-        "EA-AliCloudFirstDiscovered":  ["networkcontainer", "network", "fixedaddress"],
-        "EA-AliCloudLastDiscovered":   ["networkcontainer", "network", "fixedaddress"],
-        "EA-AliCloudSubnetID":         ["network"],
-        "EA-AliCloudSubnetName":       ["network"],
-        "EA-AliCloudZone":             ["network"],
-        "EA-AliCloudVMID":             ["fixedaddress"],
-        "EA-AliCloudVMName":           ["fixedaddress"],
-        "EA-AliCloudVMPublicIP":       ["fixedaddress"],
-        "EA-AliCloudVMOS":             ["fixedaddress"],
+        "EA-AliCloudVPCID":            ["IPv4 Network Container", "IPv4 Network", "Fixed Address"],
+        "EA-AliCloudVPCName":          ["IPv4 Network Container", "IPv4 Network"],
+        "EA-AliCloudRegion":           ["IPv4 Network Container", "IPv4 Network", "Fixed Address"],
+        "EA-AliCloudTenantID":         ["IPv4 Network Container", "IPv4 Network", "Fixed Address"],
+        "EA-AliCloudFirstDiscovered":  ["IPv4 Network Container", "IPv4 Network", "Fixed Address"],
+        "EA-AliCloudLastDiscovered":   ["IPv4 Network Container", "IPv4 Network", "Fixed Address"],
+        "EA-AliCloudSubnetID":         ["IPv4 Network"],
+        "EA-AliCloudSubnetName":       ["IPv4 Network"],
+        "EA-AliCloudZone":             ["IPv4 Network"],
+        "EA-AliCloudVMID":             ["Fixed Address"],
+        "EA-AliCloudVMName":           ["Fixed Address"],
+        "EA-AliCloudVMPublicIP":       ["Fixed Address"],
+        "EA-AliCloudVMOS":             ["Fixed Address"],
     }
 
     def ensure_extattr_defs(self):
