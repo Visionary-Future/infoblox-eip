@@ -329,6 +329,12 @@ class InfobloxWAPIClient:
         mac_address: str = "",
         os_name: str = "",
         vpc_id: str = "",
+        vpc_name: str = "",
+        region: str = "",
+        zone: str = "",
+        subnet_id: str = "",
+        subnet_name: str = "",
+        tenant_id: str = "",
     ) -> Optional[str]:
         """推送 ECS 实例为 fixedaddress 对象
 
@@ -366,6 +372,12 @@ class InfobloxWAPIClient:
             "EA-AliCloudVMPublicIP": public_ip,
             "EA-AliCloudVMOS":       os_name,
             "EA-AliCloudVPCID":      vpc_id,
+            "EA-AliCloudVPCName":    vpc_name,
+            "EA-AliCloudRegion":     region,
+            "EA-AliCloudZone":       zone,
+            "EA-AliCloudSubnetID":   subnet_id,
+            "EA-AliCloudSubnetName": subnet_name,
+            "EA-AliCloudTenantID":   tenant_id,
         }
 
         base_payload: Dict[str, Any] = {

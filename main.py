@@ -82,6 +82,8 @@ def push_to_infoblox(args, ecs_instances_raw, vpcs_raw, vswitches_raw):
 
     # ── ECS + EIP -> fixedaddress ──────────────
     if ecs_instances_raw:
+        vpc_map = {v.get("VpcId", ""): v for v in vpcs_raw}
+        vswitch_map = {v.get("VSwitchId", ""): v for v in vswitches_raw}
         log.info(f"━━━ 推送 {len(ecs_instances_raw)} 个 ECS 实例到 Infoblox (fixedaddress) ━━━")
         for ecs in ecs_instances_raw:
             vm_id = ecs.get("InstanceId", "")
@@ -91,9 +93,12 @@ def push_to_infoblox(args, ecs_instances_raw, vpcs_raw, vswitches_raw):
             private_ip = _extract_private_ip(ecs)
             public_ip = _extract_public_ip(ecs)
             mac = _extract_mac(ecs)
-            os_name = ecs.get("OSName") or ecs.get("OSType") or ""
+            os_name = ecs.get("OSName") or ecs.get("OSType") or ecs.get("Platform") or ecs.get("ImageId") or ""
             vpc_attrs = ecs.get("VpcAttributes") or {}
             vpc_id = vpc_attrs.get("VpcId") or ecs.get("VpcId") or ""
+            subnet_id = vpc_attrs.get("VSwitchId", "")
+            vpc = vpc_map.get(vpc_id, {})
+            vswitch = vswitch_map.get(subnet_id, {})
 
             if vm_id:
                 try:
@@ -105,6 +110,12 @@ def push_to_infoblox(args, ecs_instances_raw, vpcs_raw, vswitches_raw):
                         mac_address=mac,
                         os_name=os_name,
                         vpc_id=vpc_id,
+                        vpc_name=vpc.get("VpcName", ""),
+                        region=ecs.get("RegionId", "") or args.region,
+                        zone=ecs.get("ZoneId", ""),
+                        subnet_id=subnet_id,
+                        subnet_name=vswitch.get("VSwitchName", ""),
+                        tenant_id=vpc.get("OwnerId") or vpc.get("OwnerAccount") or "",
                     )
                 except Exception as e:
                     log.error(f"  ❌ ECS {vm_id} push failed: {e}")
@@ -244,7 +255,10 @@ if __name__ == '__main__':
         vswitch_csv_file_path = os.path.join(args.csv_path, args.vswitch_csv_file_name)
 
         ecs_exists_data = read_csv(VM_csv_file_path)
-        transformed_ecs = transform_ecs_instances(ecs_instances, exists_data=ecs_exists_data)
+        transformed_ecs = transform_ecs_instances(
+            ecs_instances, exists_data=ecs_exists_data,
+            vpcs=vpcs, vswitches=vswitches, region_id=region_id,
+        )
         write_csv(VM_csv_file_path, header=ECS_HEADER, rows=transformed_ecs)
         log.info(f"  ✅ VM CSV -> {VM_csv_file_path}")
 

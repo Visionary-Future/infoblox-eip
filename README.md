@@ -63,7 +63,7 @@ python3 main.py \
 |---|---|---|---|
 | VPC | `networkcontainer` | `POST /wapi/v2.13.6/networkcontainer` | EA-AliCloudVPCID, EA-AliCloudVPCName, EA-AliCloudRegion, EA-AliCloudTenantID |
 | VSwitch | `network` | `POST /wapi/v2.13.6/network` | EA-AliCloudSubnetID, EA-AliCloudSubnetName, EA-AliCloudVPCID, EA-AliCloudRegion, EA-AliCloudZone, EA-AliCloudTenantID |
-| ECS + EIP | `fixedaddress` | `POST /wapi/v2.13.6/fixedaddress` | EA-AliCloudVMID, EA-AliCloudVMName, EA-AliCloudVMPublicIP, EA-AliCloudVMOS, EA-AliCloudVPCID, EA-AliCloudRegion |
+| ECS + EIP | `fixedaddress` | `POST /wapi/v2.13.6/fixedaddress` | EA-AliCloudVMID, EA-AliCloudVMName, EA-AliCloudVMPublicIP, EA-AliCloudVMOS, EA-AliCloudVPCID, EA-AliCloudVPCName, EA-AliCloudRegion, EA-AliCloudZone, EA-AliCloudSubnetID, EA-AliCloudSubnetName, EA-AliCloudTenantID |
 
 ## 环境变量
 

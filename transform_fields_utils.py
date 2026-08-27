@@ -16,11 +16,19 @@ def cidr_to_ip_netmask(cidr_string):
         print(e)
         return None, None
 
-def transform_ecs_instances(ecs_instances: List[Dict[str, Any]] = [], exists_data: List[Dict[str, str]]=[]) -> List[Dict[str, str]]:
+def transform_ecs_instances(
+    ecs_instances: List[Dict[str, Any]] = [],
+    exists_data: List[Dict[str, str]]=[],
+    vpcs: List[Dict[str, Any]] = [],
+    vswitches: List[Dict[str, Any]] = [],
+    region_id: str = "",
+) -> List[Dict[str, str]]:
     existing: Dict[str, Dict[str, str]] = {}
     for row in exists_data:
         key = row.get("EA-AliCloudVMID", "")
         existing[key] = row
+    vpc_map: Dict[str, Dict[str, Any]] = {v.get("VpcId", ""): v for v in vpcs}
+    vswitch_map: Dict[str, Dict[str, Any]] = {v.get("VSwitchId", ""): v for v in vswitches}
     rows: List[Dict[str, str]] = []
     for ecs in ecs_instances:
         vm_id = ecs.get("InstanceId", "")
@@ -110,6 +118,11 @@ def transform_ecs_instances(ecs_instances: List[Dict[str, Any]] = [], exists_dat
 
         vpc_attrs = ecs.get("VpcAttributes") or {}
         vpc_id = vpc_attrs.get("VpcId") or ecs.get("VpcId") or ""
+        subnet_id = vpc_attrs.get("VSwitchId") or ""
+        vpc = vpc_map.get(vpc_id, {})
+        vswitch = vswitch_map.get(subnet_id, {})
+        region = ecs.get("RegionId") or region_id
+        tenant = vpc.get("OwnerId") or vpc.get("OwnerAccount") or ""
 
         guest_os = ecs.get("OSName") or ecs.get("OSType") or ecs.get("Platform") or ecs.get("ImageId") or ""
 
@@ -117,7 +130,7 @@ def transform_ecs_instances(ecs_instances: List[Dict[str, Any]] = [], exists_dat
         last = now_iso()
 
         if vm_id in existing:
-            first = existing[key].get("EA-AliCloudFirstDiscovered", first)
+            first = existing[vm_id].get("EA-AliCloudFirstDiscovered", first)
             last = now_iso()
         row = {
             "HEADER-FixedAddress": "FixedAddress",
@@ -127,9 +140,15 @@ def transform_ecs_instances(ecs_instances: List[Dict[str, Any]] = [], exists_dat
             "EA-AliCloudVMID": vm_id,
             "EA-AliCloudVMPublicIP": public_ip,
             "EA-AliCloudVMOS": guest_os,
+            "EA-AliCloudVPCID": vpc_id,
+            "EA-AliCloudVPCName": vpc.get("VpcName", ""),
+            "EA-AliCloudRegion": region,
+            "EA-AliCloudZone": ecs.get("ZoneId", ""),
+            "EA-AliCloudSubnetID": subnet_id,
+            "EA-AliCloudSubnetName": vswitch.get("VSwitchName", ""),
+            "EA-AliCloudTenantID": tenant,
             "EA-AliCloudFirstDiscovered": first,
             "EA-AliCloudLastDiscovered": last,
-            "EA-AliCloudVPCID": vpc_id,
         }
         rows.append(row)
     return rows
