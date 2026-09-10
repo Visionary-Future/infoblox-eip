@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 from typing import Any, List, Optional, Dict
 
 from alibabacloud_credentials.models import Config
