@@ -34,11 +34,8 @@ def transform_ecs_instances(
         vm_id = ecs.get("InstanceId", "")
         vm_name = ecs.get("InstanceName") or ecs.get("HostName") or ""
 
-        # Private IP and MAC extraction handling multiple shapes, incl.
-        # NetworkInterfaces -> NetworkInterface list with PrimaryIpAddress and PrivateIpSets
         private_ip = ""
         mac = ""
-        # Prefer NetworkInterfaces structure if present
         nis = ecs.get("NetworkInterfaces") or ecs.get("NetworkInterfaceSet")
         if isinstance(nis, dict):
             items = nis.get("NetworkInterface", [])
@@ -46,7 +43,6 @@ def transform_ecs_instances(
             items = nis or []
 
         if items:
-            # Try to find primary private IP from PrivateIpSets where Primary is True
             for iface in items:
                 # MAC from interface if available
                 if not mac:
@@ -227,4 +223,3 @@ def transform_VSwitches(VSwitches: List[Dict[str, Any]] = [], exists_data: List[
         }
         rows.append(row)
     return rows
-
