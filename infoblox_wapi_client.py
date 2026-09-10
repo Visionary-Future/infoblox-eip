@@ -1,17 +1,3 @@
-# -*- coding: utf-8 -*-
-"""Infoblox WAPI 客户端 - 将阿里云采集的 VPC / VSwitch / ECS(EIP) 数据推送到 Infoblox
-
-支持的对象:
-  - VPC       -> networkcontainer  (POST /wapi/v2.13.6/networkcontainer)
-  - VSwitch   -> network            (POST /wapi/v2.13.6/network)
-  - ECS/EIP   -> fixedaddress       (POST /wapi/v2.13.6/fixedaddress)
-
-字段策略: 严格对齐 PPT《NDB IPAM import》定义的 EA 字段格式。
-所有云属性通过 extattrs 写入, 和 CSV 导入方案保持一致。
-去重: 通过原生字段 (network / ipv4addr + network_view) 查询。
-更新: 已存在时保留 FirstDiscovered, 更新其他所有字段。
-"""
-
 import logging
 import urllib3
 from datetime import datetime, timezone
@@ -23,13 +9,10 @@ log = logging.getLogger("infoblox-wapi")
 
 
 def _now_iso() -> str:
-    """UTC ISO 8601 时间戳, 和 CSV 里的 FirstDiscovered/LastDiscovered 格式一致"""
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 class InfobloxWAPIClient:
-    """Infoblox WAPI REST 客户端"""
-
     def __init__(
         self,
         base_url: str,
@@ -54,8 +37,6 @@ class InfobloxWAPIClient:
         if not verify_ssl:
             urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-    # ── Extensible Attribute 定义 (对齐 PPT) ──────
-
     REQUIRED_EA_DEFS = [
         # VPC
         "EA-AliCloudVPCID",
@@ -76,11 +57,6 @@ class InfobloxWAPIClient:
     ]
 
     def ensure_extattr_defs(self):
-        """确保所有 EA 属性定义已存在, 不存在则创建 (type=STRING)
-
-        注意: 不设 allowed_object_types, 不同 NIOS 版本对其取值要求不同,
-        不设时 EA 默认可关联所有对象类型, 不影响使用。
-        """
         log.info("━━━ 检查/创建 Extensible Attribute 定义 ━━━")
         for name in self.REQUIRED_EA_DEFS:
             try:
@@ -102,8 +78,6 @@ class InfobloxWAPIClient:
                     log.error(f"  ❌ 创建 EA '{name}' HTTP {resp.status_code}: {resp.text[:200]}")
             except Exception as e:
                 log.error(f"  ❌ 创建 EA '{name}' 失败: {e}")
-
-    # ── 低层 HTTP ──────────────────────────────
 
     def _post(self, object_type: str, payload: dict) -> Optional[str]:
         url = f"{self.api_base}/{object_type}"
@@ -135,7 +109,6 @@ class InfobloxWAPIClient:
         return resp.json()
 
     def _put(self, ref: str, payload: dict) -> Optional[str]:
-        """PUT 更新对象, 返回 ref"""
         url = f"{self.api_base}/{ref}"
         resp = self.session.put(url, json=payload, timeout=self.timeout)
         if resp.status_code == 200:
@@ -161,7 +134,6 @@ class InfobloxWAPIClient:
         self, object_type: str, search_fields: dict,
         return_fields: List[str] = None,
     ) -> List[dict]:
-        """通过原生字段查询去重: GET /<obj>?field1=val1&field2=val2"""
         params = dict(search_fields)
         if return_fields:
             params["_return_fields"] = ",".join(return_fields)
@@ -173,7 +145,6 @@ class InfobloxWAPIClient:
 
     @staticmethod
     def _build_extattrs(fields: Dict[str, str]) -> Dict[str, Any]:
-        """构建 extattrs, 跳过空值, 所有值转 str"""
         extattrs = {}
         for k, v in fields.items():
             if v is not None and v != "":
@@ -181,7 +152,6 @@ class InfobloxWAPIClient:
         return extattrs
 
     def _get_existing_first_discovered(self, existing_obj: dict) -> str:
-        """从已存在对象中提取 FirstDiscovered 时间戳"""
         try:
             extattrs = existing_obj.get("extattrs", {})
             return extattrs.get("EA-AliCloudFirstDiscovered", {}).get("value", "")
@@ -196,12 +166,6 @@ class InfobloxWAPIClient:
         extattr_fields: Dict[str, str],
         base_payload: Dict[str, Any],
     ) -> Optional[str]:
-        """通用 upsert 逻辑: 不存在则 POST, 已存在则 PUT 全量更新
-
-        - FirstDiscovered: 新建时设为 now, 已存在时保留原值
-        - LastDiscovered: 始终更新为 now
-        - 其他 extattrs: 始终用最新数据覆盖
-        """
         existing = self._search_native(
             object_type,
             search_fields,
@@ -212,7 +176,6 @@ class InfobloxWAPIClient:
 
         if existing:
             ref = existing[0]["_ref"]
-            # 保留原有 FirstDiscovered
             first_discovered = self._get_existing_first_discovered(existing[0]) or now
             log.info(f"  🔄 Updating {object_type} -> {ref}")
             log.debug(f"  existing extattrs: {existing[0].get('extattrs', {})}")
@@ -255,10 +218,7 @@ class InfobloxWAPIClient:
         region: str = "",
         tenant_id: str = "",
     ) -> Optional[str]:
-        """推送 VPC 为 networkcontainer 对象
 
-        对齐 PPT slide 4 字段映射
-        """
         comment = f"VPC: {vpc_name} ({vpc_id})"
 
         extattr_fields = {
@@ -292,10 +252,6 @@ class InfobloxWAPIClient:
         zone: str = "",
         tenant_id: str = "",
     ) -> Optional[str]:
-        """推送 VSwitch 为 network 对象
-
-        对齐 PPT slide 7 字段映射
-        """
         comment = f"VSwitch: {vswitch_name} ({vswitch_id})"
 
         extattr_fields = {

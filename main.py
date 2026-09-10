@@ -15,7 +15,6 @@ log = logging.getLogger("infoblox-eip")
 
 
 def push_to_infoblox(args, ecs_instances_raw, vpcs_raw, vswitches_raw):
-    """将阿里云采集的原始数据推送到 Infoblox WAPI"""
     from infoblox_wapi_client import InfobloxWAPIClient
 
     client = InfobloxWAPIClient(
@@ -27,10 +26,8 @@ def push_to_infoblox(args, ecs_instances_raw, vpcs_raw, vswitches_raw):
         verify_ssl=not args.infoblox_no_verify_ssl,
     )
 
-    # 先确保所有 extattr 定义已存在
     client.ensure_extattr_defs()
 
-    # ── VPC -> networkcontainer ────────────────
     if vpcs_raw:
         log.info(f"━━━ 推送 {len(vpcs_raw)} 个 VPC 到 Infoblox (networkcontainer) ━━━")
         for vpc in vpcs_raw:
@@ -51,9 +48,7 @@ def push_to_infoblox(args, ecs_instances_raw, vpcs_raw, vswitches_raw):
                 except Exception as e:
                     log.error(f"  ❌ VPC {vpc_id} push failed: {e}")
 
-    # ── VSwitch -> network ─────────────────────
     if vswitches_raw:
-        # 构建 vpc_id -> vpc_name 映射
         vpc_name_map = {v.get("VpcId", ""): v.get("VpcName", "") for v in vpcs_raw}
         log.info(f"━━━ 推送 {len(vswitches_raw)} 个 VSwitch 到 Infoblox (network) ━━━")
         for vsw in vswitches_raw:
@@ -80,7 +75,6 @@ def push_to_infoblox(args, ecs_instances_raw, vpcs_raw, vswitches_raw):
                 except Exception as e:
                     log.error(f"  ❌ VSwitch {vsw_id} push failed: {e}")
 
-    # ── ECS + EIP -> fixedaddress ──────────────
     if ecs_instances_raw:
         vpc_map = {v.get("VpcId", ""): v for v in vpcs_raw}
         vswitch_map = {v.get("VSwitchId", ""): v for v in vswitches_raw}
@@ -122,7 +116,6 @@ def push_to_infoblox(args, ecs_instances_raw, vpcs_raw, vswitches_raw):
 
 
 def _extract_private_ip(ecs: dict) -> str:
-    """从 ECS 实例中提取私网 IP (与 transform_fields_utils 逻辑一致)"""
     nis = ecs.get("NetworkInterfaces") or ecs.get("NetworkInterfaceSet")
     if isinstance(nis, dict):
         items = nis.get("NetworkInterface", [])
@@ -153,7 +146,6 @@ def _extract_private_ip(ecs: dict) -> str:
 
 
 def _extract_public_ip(ecs: dict) -> str:
-    """从 ECS 实例中提取公网 IP / EIP"""
     import ast
 
     if isinstance(ecs.get("PublicIpAddress"), dict):
@@ -180,7 +172,6 @@ def _extract_public_ip(ecs: dict) -> str:
 
 
 def _extract_mac(ecs: dict) -> str:
-    """从 ECS 实例中提取 MAC 地址"""
     nis = ecs.get("NetworkInterfaces") or ecs.get("NetworkInterfaceSet")
     if isinstance(nis, dict):
         items = nis.get("NetworkInterface", [])
@@ -195,18 +186,15 @@ if __name__ == '__main__':
 
     parser = argparse.ArgumentParser(description="Collect Aliyun VPC/EIP/ECS data and push to Infoblox")
 
-    # ── 阿里云参数 ──
     parser.add_argument("--access-key-id", type=str, default=os.environ.get("ALIYUN_ACCESS_KEY_ID"))
     parser.add_argument("--access-key-secret", type=str, default=os.environ.get("ALIYUN_ACCESS_KEY_SECRET"))
     parser.add_argument("--region", type=str, default=os.environ.get("ALIYUN_REGION", "cn-hangzhou"))
 
-    # ── CSV 输出参数 (保留原有功能) ──
     parser.add_argument("--csv-path", type=str, default="./", help="Output CSV path")
     parser.add_argument("--VM-csv-file-name", type=str, default="VM.csv", help="VM CSV output file name")
     parser.add_argument("--VPC-csv-file-name", type=str, default="VPC.csv", help="VPC CSV output file name")
     parser.add_argument("--vswitch-csv-file-name", type=str, default="vswitch.csv", help="vswitch CSV output file name")
 
-    # ── Infoblox WAPI 参数 ──
     parser.add_argument("--infoblox-url", type=str, default=os.environ.get("INFOBLOX_URL"),
                         help="Infoblox WAPI base URL, e.g. https://10.0.0.1")
     parser.add_argument("--infoblox-user", type=str, default=os.environ.get("INFOBLOX_USER"),
@@ -217,7 +205,6 @@ if __name__ == '__main__':
     parser.add_argument("--network-view", type=str, default="default", help="Infoblox network view")
     parser.add_argument("--infoblox-no-verify-ssl", action="store_true", help="Skip SSL verification")
 
-    # ── 模式控制 ──
     parser.add_argument("--no-csv", action="store_true", help="Skip CSV output")
     parser.add_argument("--no-push", action="store_true", help="Skip Infoblox WAPI push")
     parser.add_argument("--dry-run", action="store_true", help="Collect data but don't write CSV or push")
@@ -229,7 +216,6 @@ if __name__ == '__main__':
         log.error("Please provide access_key_id and access_key_secret (set ALIYUN_ACCESS_KEY_ID / ALIYUN_ACCESS_KEY_SECRET env vars).")
         sys.exit(1)
 
-    # ── 1. 从阿里云采集数据 ──
     aliyun_client = AliyunClient(
         access_key_id=args.access_key_id,
         access_key_secret=args.access_key_secret,
@@ -247,9 +233,8 @@ if __name__ == '__main__':
     vswitches = aliyun_client.get_VSwitches(vpc_ids)
     log.info(f"  采集到 {len(vswitches)} 个 VSwitch")
 
-    # ── 2. CSV 输出 (原有功能) ──
     if not args.no_csv and not args.dry_run:
-        log.info("━━━ 写入 CSV ━━━")
+        log.info("━━━ writing CSV ━━━")
         VM_csv_file_path = os.path.join(args.csv_path, args.VM_csv_file_name)
         VPC_csv_file_path = os.path.join(args.csv_path, args.VPC_csv_file_name)
         vswitch_csv_file_path = os.path.join(args.csv_path, args.vswitch_csv_file_name)
@@ -272,7 +257,6 @@ if __name__ == '__main__':
         write_csv(vswitch_csv_file_path, header=VSWITCHE_HEADER, rows=transformed_vswitches)
         log.info(f"  ✅ VSwitch CSV -> {vswitch_csv_file_path}")
 
-    # ── 3. 推送到 Infoblox WAPI ──
     if not args.no_push and not args.dry_run:
         if not args.infoblox_url or not args.infoblox_user or not args.infoblox_password:
             log.warning("━━━ 跳过 Infoblox 推送 (未提供 --infoblox-url/--infoblox-user/--infoblox-password) ━━━")
@@ -283,4 +267,4 @@ if __name__ == '__main__':
     if args.dry_run:
         log.info("━━━ Dry run 完成 (未写入 CSV, 未推送 WAPI) ━━━")
 
-    log.info("━━━ 完成 ━━━")
+    log.info("━━━ done ━━━")
