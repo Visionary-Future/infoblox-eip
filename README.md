@@ -10,6 +10,17 @@ poetry install
 
 ## 用法
 
+### 0. 配置文件（推荐）
+
+复制 `config.example.toml` 为 `config.toml`，填入真实值（config.toml 已 gitignore，不会提交含密码的配置）：
+
+```bash
+cp config.example.toml config.toml
+python3 main.py
+```
+
+优先级：命令行参数 > 配置文件 > 环境变量 > 内置默认值。可用 `--config` 指定其他配置文件路径，亦可继续用命令行参数覆盖单个项。
+
 ### 1. 仅采集 + 写 CSV（原有功能）
 
 ```bash

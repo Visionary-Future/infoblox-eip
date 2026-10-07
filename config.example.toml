@@ -1,0 +1,26 @@
+# Example config for infoblox-eip. Copy to config.toml and fill in real values.
+# Precedence: CLI argument > config file > environment variable > built-in default.
+
+[aliyun]
+access_key_id = ""            # or env ALIYUN_ACCESS_KEY_ID
+access_key_secret = ""        # or env ALIYUN_ACCESS_KEY_SECRET
+region = "cn-hangzhou"        # or env ALIYUN_REGION
+
+[csv]
+path = "./"
+vm_file_name = "VM.csv"
+vpc_file_name = "VPC.csv"
+vswitch_file_name = "vswitch.csv"
+
+[infoblox]
+url = ""                      # or env INFOBLOX_URL, e.g. https://10.0.0.1
+user = ""                     # or env INFOBLOX_USER
+password = ""                 # or env INFOBLOX_PASSWORD
+wapi_version = "2.13.6"
+network_view = "default"
+verify_ssl = true             # false skips SSL verification
+
+[run]
+no_csv = false
+no_push = false
+dry_run = false

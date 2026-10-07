@@ -4,6 +4,7 @@ import os
 import sys
 
 from alicloud_utils import AliyunClient
+from config import load_config, merge_cli_config
 from csv_utils import read_csv, write_csv, ECS_HEADER, VPC_HEADER, VSWITCHE_HEADER
 from transform_fields_utils import transform_ecs_instances, transform_vpcs, transform_VSwitches
 
@@ -186,30 +187,34 @@ if __name__ == '__main__':
 
     parser = argparse.ArgumentParser(description="Collect Aliyun VPC/EIP/ECS data and push to Infoblox")
 
-    parser.add_argument("--access-key-id", type=str, default=os.environ.get("ALIYUN_ACCESS_KEY_ID"))
-    parser.add_argument("--access-key-secret", type=str, default=os.environ.get("ALIYUN_ACCESS_KEY_SECRET"))
-    parser.add_argument("--region", type=str, default=os.environ.get("ALIYUN_REGION", "cn-hangzhou"))
+    parser.add_argument("--config", type=str, default="config.toml",
+                        help="TOML config file path (see config.example.toml)")
 
-    parser.add_argument("--csv-path", type=str, default="./", help="Output CSV path")
-    parser.add_argument("--VM-csv-file-name", type=str, default="VM.csv", help="VM CSV output file name")
-    parser.add_argument("--VPC-csv-file-name", type=str, default="VPC.csv", help="VPC CSV output file name")
-    parser.add_argument("--vswitch-csv-file-name", type=str, default="vswitch.csv", help="vswitch CSV output file name")
+    parser.add_argument("--access-key-id", type=str, default=None)
+    parser.add_argument("--access-key-secret", type=str, default=None)
+    parser.add_argument("--region", type=str, default=None)
 
-    parser.add_argument("--infoblox-url", type=str, default=os.environ.get("INFOBLOX_URL"),
+    parser.add_argument("--csv-path", type=str, default=None, help="Output CSV path")
+    parser.add_argument("--VM-csv-file-name", type=str, default=None, help="VM CSV output file name")
+    parser.add_argument("--VPC-csv-file-name", type=str, default=None, help="VPC CSV output file name")
+    parser.add_argument("--vswitch-csv-file-name", type=str, default=None, help="vswitch CSV output file name")
+
+    parser.add_argument("--infoblox-url", type=str, default=None,
                         help="Infoblox WAPI base URL, e.g. https://10.0.0.1")
-    parser.add_argument("--infoblox-user", type=str, default=os.environ.get("INFOBLOX_USER"),
-                        help="Infoblox WAPI username")
-    parser.add_argument("--infoblox-password", type=str, default=os.environ.get("INFOBLOX_PASSWORD"),
-                        help="Infoblox WAPI password")
-    parser.add_argument("--wapi-version", type=str, default="2.13.6", help="WAPI version")
-    parser.add_argument("--network-view", type=str, default="default", help="Infoblox network view")
-    parser.add_argument("--infoblox-no-verify-ssl", action="store_true", help="Skip SSL verification")
+    parser.add_argument("--infoblox-user", type=str, default=None, help="Infoblox WAPI username")
+    parser.add_argument("--infoblox-password", type=str, default=None, help="Infoblox WAPI password")
+    parser.add_argument("--wapi-version", type=str, default=None, help="WAPI version")
+    parser.add_argument("--network-view", type=str, default=None, help="Infoblox network view")
+    parser.add_argument("--infoblox-no-verify-ssl", action="store_true", default=None,
+                        help="Skip SSL verification")
 
-    parser.add_argument("--no-csv", action="store_true", help="Skip CSV output")
-    parser.add_argument("--no-push", action="store_true", help="Skip Infoblox WAPI push")
-    parser.add_argument("--dry-run", action="store_true", help="Collect data but don't write CSV or push")
+    parser.add_argument("--no-csv", action="store_true", default=None, help="Skip CSV output")
+    parser.add_argument("--no-push", action="store_true", default=None, help="Skip Infoblox WAPI push")
+    parser.add_argument("--dry-run", action="store_true", default=None,
+                        help="Collect data but don't write CSV or push")
 
     args = parser.parse_args()
+    args = argparse.Namespace(**merge_cli_config(args, load_config(args.config)))
     region_id = args.region
 
     if not args.access_key_id or not args.access_key_secret:
