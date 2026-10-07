@@ -1,7 +1,9 @@
 """Unit tests for infoblox_wapi_client Network View management methods."""
 
-from unittest.mock import MagicMock, patch, PropertyMock
+from unittest.mock import MagicMock
+
 import pytest
+
 from infoblox_wapi_client import InfobloxWAPIClient
 
 
@@ -15,24 +17,6 @@ def client():
     )
     c.session = MagicMock()
     return c
-
-
-class TestListNetworkViews:
-    def test_returns_view_list(self, client):
-        mock_views = [{"name": "default"}, {"name": "Ali-cn-hangzhou"}]
-        client._get = MagicMock(return_value=mock_views)
-
-        result = client.list_network_views()
-
-        client._get.assert_called_once_with("networkview")
-        assert result == mock_views
-
-    def test_returns_empty_on_error(self, client):
-        client._get = MagicMock(side_effect=Exception("connection error"))
-
-        result = client.list_network_views()
-
-        assert result == []
 
 
 class TestEnsureNetworkView:

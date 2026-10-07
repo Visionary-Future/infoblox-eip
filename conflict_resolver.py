@@ -9,27 +9,34 @@ Follows "阿里云IPAM冲突对应存写方案":
 
 import ipaddress
 import logging
+import re
 from typing import Any, Dict, List, NamedTuple, Optional, Tuple
 
 log = logging.getLogger("infoblox-eip")
 
+VIEW_NAME_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+
 
 class ResourceGroup(NamedTuple):
     """Resources assigned to a single Network View."""
-    vpcs: List[Dict[str, Any]]
-    vswitches: List[Dict[str, Any]]
-    ecs: List[Dict[str, Any]]
+    vpcs: Tuple[Dict[str, Any], ...]
+    vswitches: Tuple[Dict[str, Any], ...]
+    ecs: Tuple[Dict[str, Any], ...]
 
 
 def _parse_cidr(cidr_str: str) -> Optional[ipaddress.IPv4Network]:
-    """Parse a CIDR string, returning None on failure."""
+    """Parse an IPv4 CIDR string, returning None on failure or IPv6 input."""
     if not cidr_str:
         return None
     try:
-        return ipaddress.ip_network(cidr_str, strict=False)
+        net = ipaddress.ip_network(cidr_str, strict=False)
     except ValueError:
         log.warning(f"Cannot parse CIDR: {cidr_str}")
         return None
+    if not isinstance(net, ipaddress.IPv4Network):
+        log.warning(f"Cannot use non-IPv4 CIDR: {cidr_str}")
+        return None
+    return net
 
 
 def _cidr_overlaps_any(
@@ -67,16 +74,16 @@ def detect_cidr_conflicts(
         vpc_id = vpc.get("VpcId", "")
         group_value = vpc.get(group_key, "default") or "default"
         groups.setdefault(group_value, []).append(vpc)
-        vpc_id_to_group[vpc_id] = group_value
+        if vpc_id:
+            vpc_id_to_group[vpc_id] = group_value
 
     if not groups:
         return {}, vpc_id_to_group
 
-    # Sort: put "default" group first, then others
-    group_names = list(groups.keys())
-    if "default" in group_names:
-        group_names.remove("default")
-        group_names.insert(0, "default")
+    # Deterministic ordering: "default" group first, then alphabetical. Never
+    # depend on API return order or conflict group numbers would change
+    # between runs, flipping resources between views.
+    group_names = sorted(groups.keys(), key=lambda g: (g != "default", g))
 
     base_networks: List[ipaddress.IPv4Network] = []
     conflict_groups: Dict[str, int] = {}
@@ -122,18 +129,28 @@ def assign_network_view_names(
     conflict_groups: Dict[str, int],
     region: str,
     prefix: str = "Ali",
+    base_view: str = "",
 ) -> Dict[str, str]:
     """Map each group value to a Network View name.
 
-    Group 0 → {prefix}-{region}
-    Group N → {prefix}-{region}{str(N+1).zfill(3)}  (002, 003, ...)
+    Group 0 → base_view, or {prefix}-{region} if base_view is empty
+    Group N → {base}{str(N+1).zfill(3)}  (002, 003, ...)
+
+    Raises ValueError on names that are not valid WAPI view names.
     """
+    base = base_view or f"{prefix}-{region}"
+    if not VIEW_NAME_RE.fullmatch(base):
+        raise ValueError(
+            f"Invalid Network View base name: {base!r} "
+            f"(allowed: [A-Za-z0-9_-], max 64 chars)"
+        )
+
     view_names: Dict[str, str] = {}
     for group_value, group_num in conflict_groups.items():
         if group_num == 0:
-            view_names[group_value] = f"{prefix}-{region}"
+            view_names[group_value] = base
         else:
-            view_names[group_value] = f"{prefix}-{region}{str(group_num + 1).zfill(3)}"
+            view_names[group_value] = f"{base}{str(group_num + 1).zfill(3)}"
     return view_names
 
 
@@ -159,38 +176,48 @@ def group_resources_by_view(
         if view_name:
             vpc_view_map[vpc_id] = view_name
 
-    # Default view for unmatched resources
-    default_view = list(group_view_map.values())[0] if group_view_map else "default"
+    # Accumulate into plain buckets, then freeze into ResourceGroups once.
+    buckets: Dict[str, Dict[str, List[Dict[str, Any]]]] = {}
 
-    views: Dict[str, ResourceGroup] = {}
-
-    def _ensure_view(name: str):
-        if name not in views:
-            views[name] = ResourceGroup(vpcs=[], vswitches=[], ecs=[])
+    def _bucket(name: str) -> Dict[str, List[Dict[str, Any]]]:
+        return buckets.setdefault(name, {"vpcs": [], "vswitches": [], "ecs": []})
 
     # VPCs
     for vpc in vpcs:
         vpc_id = vpc.get("VpcId", "")
-        view_name = vpc_view_map.get(vpc_id, default_view)
-        _ensure_view(view_name)
-        views[view_name].vpcs.append(vpc)
+        view_name = vpc_view_map.get(vpc_id)
+        if view_name is None:
+            log.warning(f"VPC {vpc_id or '?'} has no Network View assigned, skipped")
+            continue
+        _bucket(view_name)["vpcs"].append(vpc)
 
     # VSwitches
     for vsw in vswitches:
         vpc_id = vsw.get("VpcId", "")
-        view_name = vpc_view_map.get(vpc_id, default_view)
-        _ensure_view(view_name)
-        views[view_name].vswitches.append(vsw)
+        view_name = vpc_view_map.get(vpc_id)
+        if view_name is None:
+            log.warning(f"VSwitch {vsw.get('VSwitchId', '?')} has no Network View assigned, skipped")
+            continue
+        _bucket(view_name)["vswitches"].append(vsw)
 
     # ECS
     for ecs in ecs:
         vpc_attrs = ecs.get("VpcAttributes") or {}
         vpc_id = vpc_attrs.get("VpcId") or ecs.get("VpcId") or ""
-        view_name = vpc_view_map.get(vpc_id, default_view)
-        _ensure_view(view_name)
-        views[view_name].ecs.append(ecs)
+        view_name = vpc_view_map.get(vpc_id)
+        if view_name is None:
+            log.warning(f"ECS {ecs.get('InstanceId', '?')} has no Network View assigned, skipped")
+            continue
+        _bucket(view_name)["ecs"].append(ecs)
 
-    return views
+    return {
+        name: ResourceGroup(
+            vpcs=tuple(b["vpcs"]),
+            vswitches=tuple(b["vswitches"]),
+            ecs=tuple(b["ecs"]),
+        )
+        for name, b in buckets.items()
+    }
 
 
 def resolve_network_views(
@@ -200,6 +227,7 @@ def resolve_network_views(
     region: str,
     prefix: str = "Ali",
     group_key: str = "_account",
+    base_view: str = "",
 ) -> Dict[str, ResourceGroup]:
     """Detect CIDR conflicts, assign Network Views, group resources.
 
@@ -213,12 +241,17 @@ def resolve_network_views(
         prefix: Network View name prefix (default "Ali").
         group_key: Dict key on VPC dict for grouping (default "_account").
                    Set by caller before invoking (e.g. based on OwnerId).
+        base_view: Explicit base Network View name. If empty, uses
+                   {prefix}-{region}. When set (e.g. from config
+                   infoblox.network_view), it wins over prefix/region.
 
     Returns:
         {view_name: ResourceGroup} mapping, ready for per-view push.
     """
     conflict_groups, vpc_id_to_group = detect_cidr_conflicts(vpcs, group_key=group_key)
-    group_view_map = assign_network_view_names(conflict_groups, region, prefix=prefix)
+    group_view_map = assign_network_view_names(
+        conflict_groups, region, prefix=prefix, base_view=base_view,
+    )
     views = group_resources_by_view(vpcs, vswitches, ecs, group_view_map, vpc_id_to_group)
 
     log.info(f"Resolved {len(vpcs)} VPCs → {len(views)} Network Views:")

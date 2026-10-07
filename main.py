@@ -21,35 +21,48 @@ def push_to_infoblox(args, ecs_instances_raw, vpcs_raw, vswitches_raw):
 
     Uses CIDR conflict detection to assign resources to different Network Views.
     For single-account (all VPC CIDRs unique), everything routes to the base view:
-    {prefix}-{region} (e.g. Ali-cn-hangzhou).
+    {prefix}-{region} (e.g. Ali-cn-hangzhou), unless config infoblox.network_view
+    is explicitly set to something other than "default" — that value then wins
+    as the base view (backwards compat with pre-sharding configs).
     """
     from infoblox_wapi_client import InfobloxWAPIClient
 
-    prefix = getattr(args, "network_view_prefix", None) or "Ali"
+    prefix = args.network_view_prefix
     region = args.region
 
-    # Annotate VPCs with _account for grouping (multi-account ready: set per-VPC)
-    for vpc in vpcs_raw:
-        if "_account" not in vpc:
-            vpc["_account"] = "default"
+    # Backwards compat: infoblox.network_view set to a real name wins over
+    # the generated {prefix}-{region} base view.
+    configured_view = args.network_view or ""
+    if configured_view and configured_view != "default":
+        base_view = configured_view
+    else:
+        base_view = f"{prefix}-{region}"
+
+    # Annotate VPCs with _account for grouping (multi-account ready: set per-VPC).
+    # Copy dicts instead of mutating the caller's data.
+    vpcs = [{**vpc, "_account": vpc.get("_account", "default")} for vpc in vpcs_raw]
 
     # Resolve resources into per-view groups
-    views = resolve_network_views(
-        vpcs_raw, vswitches_raw, ecs_instances_raw,
-        region=region, prefix=prefix,
-    )
+    try:
+        views = resolve_network_views(
+            vpcs, vswitches_raw, ecs_instances_raw,
+            region=region, prefix=prefix, base_view=base_view,
+        )
+    except ValueError as e:
+        log.error(f"  ❌ Network View 名称不合法: {e}")
+        return
 
     if not views:
         log.warning("No resources to push (empty views)")
         return
 
-    # Create one client — reuse session, switch network_view per group
+    # One client — reuse session; network_view is passed per push call.
     client = InfobloxWAPIClient(
         base_url=args.infoblox_url,
         username=args.infoblox_user,
         password=args.infoblox_password,
         wapi_version=args.wapi_version,
-        network_view="",  # overridden per-view below
+        network_view=base_view,
         verify_ssl=not args.infoblox_no_verify_ssl,
     )
 
@@ -58,17 +71,18 @@ def push_to_infoblox(args, ecs_instances_raw, vpcs_raw, vswitches_raw):
 
     for view_name, group in views.items():
         log.info(f"━━━ Network View: {view_name} ━━━")
-        client.network_view = view_name
-        client.ensure_network_view(view_name)
+        if not client.ensure_network_view(view_name):
+            log.error(f"  ❌ 无法创建/确认 Network View '{view_name}'，跳过该视图的所有推送")
+            continue
 
-        _push_vpcs(client, group.vpcs)
-        _push_vswitches(client, group.vswitches, group.vpcs, region)
-        _push_ecs(client, group.ecs, group.vpcs, group.vswitches, region)
+        _push_vpcs(client, group.vpcs, view_name)
+        _push_vswitches(client, group.vswitches, group.vpcs, region, view_name)
+        _push_ecs(client, group.ecs, group.vpcs, group.vswitches, region, view_name)
 
     log.info(f"Pushed to {len(views)} Network View(s): {list(views.keys())}")
 
 
-def _push_vpcs(client, vpcs):
+def _push_vpcs(client, vpcs, view_name):
     if not vpcs:
         return
     log.info(f"  推送 {len(vpcs)} 个 VPC → networkcontainer")
@@ -83,12 +97,13 @@ def _push_vpcs(client, vpcs):
                 client.push_vpc(
                     vpc_id=vpc_id, vpc_name=vpc_name,
                     cidr_block=cidr_block, region=region, tenant_id=tenant,
+                    network_view=view_name,
                 )
             except Exception as e:
                 log.error(f"  ❌ VPC {vpc_id} push failed: {e}")
 
 
-def _push_vswitches(client, vswitches, vpcs, region):
+def _push_vswitches(client, vswitches, vpcs, region, view_name):
     if not vswitches:
         return
     vpc_name_map = {v.get("VpcId", ""): v.get("VpcName", "") for v in vpcs}
@@ -108,12 +123,13 @@ def _push_vswitches(client, vswitches, vpcs, region):
                     cidr_block=cidr_block, vpc_id=vpc_id, vpc_name=vpc_name,
                     region=vsw.get("RegionId", "") or region,
                     zone=zone, tenant_id=tenant,
+                    network_view=view_name,
                 )
             except Exception as e:
                 log.error(f"  ❌ VSwitch {vsw_id} push failed: {e}")
 
 
-def _push_ecs(client, ecs_instances, vpcs, vswitches, region):
+def _push_ecs(client, ecs_instances, vpcs, vswitches, region, view_name):
     if not ecs_instances:
         return
     vpc_map = {v.get("VpcId", ""): v for v in vpcs}
@@ -144,6 +160,7 @@ def _push_ecs(client, ecs_instances, vpcs, vswitches, region):
                     subnet_id=subnet_id,
                     subnet_name=vswitch.get("VSwitchName", ""),
                     tenant_id=vpc.get("OwnerId") or vpc.get("OwnerAccount") or "",
+                    network_view=view_name,
                 )
             except Exception as e:
                 log.error(f"  ❌ ECS {vm_id} push failed: {e}")

@@ -4,9 +4,12 @@ Precedence: CLI argument > config file > environment variable > built-in default
 Missing config file is not an error; everything falls back as before.
 """
 
+import logging
 import os
 import tomllib
 from pathlib import Path
+
+log = logging.getLogger("infoblox-eip")
 
 # config key "section.key" -> argparse dest
 KEY_MAP = {
@@ -55,6 +58,13 @@ def load_config(path: str | None) -> dict:
     """Return flat {arg dest: value} from TOML file, {} if missing or empty."""
     if not path or not Path(path).exists():
         return {}
+    # config.toml holds credentials — warn if it leaks to group/other
+    st = os.stat(path)
+    if st.st_mode & 0o077:
+        log.warning(
+            f"Config file {path} is readable by group/others "
+            f"(mode {oct(st.st_mode & 0o777)}). Recommend: chmod 600 {path}"
+        )
     with open(path, "rb") as f:
         raw = tomllib.load(f)
 

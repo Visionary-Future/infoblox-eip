@@ -1,16 +1,17 @@
 """Unit tests for conflict_resolver module."""
 
+import ipaddress
+
 import pytest
+
 from conflict_resolver import (
-    ResourceGroup,
-    _parse_cidr,
     _cidr_overlaps_any,
-    detect_cidr_conflicts,
+    _parse_cidr,
     assign_network_view_names,
+    detect_cidr_conflicts,
     group_resources_by_view,
     resolve_network_views,
 )
-import ipaddress
 
 
 class TestParseCidr:
@@ -29,6 +30,9 @@ class TestParseCidr:
 
     def test_empty_cidr(self):
         assert _parse_cidr("") is None
+
+    def test_ipv6_cidr_returns_none(self):
+        assert _parse_cidr("fd00::/64") is None
 
 
 class TestCidrOverlapsAny:
@@ -121,6 +125,26 @@ class TestDetectCidrConflicts:
         groups, vpc_map = detect_cidr_conflicts([])
         assert groups == {}
 
+    def test_ordering_independent(self):
+        """Conflict group numbers must not depend on API return order."""
+        vpc_list = [
+            {"VpcId": "vpc-1", "CidrBlock": "10.0.0.0/16", "_account": "default"},
+            {"VpcId": "vpc-2", "CidrBlock": "10.0.0.0/16", "_account": "user-b"},
+            {"VpcId": "vpc-3", "CidrBlock": "10.0.0.0/16", "_account": "user-a"},
+        ]
+        groups_fwd, _ = detect_cidr_conflicts(vpc_list)
+        groups_rev, _ = detect_cidr_conflicts(list(reversed(vpc_list)))
+        assert groups_fwd == groups_rev == {"default": 0, "user-a": 1, "user-b": 2}
+
+    def test_vpc_without_id_not_in_map(self):
+        vpcs = [
+            {"VpcId": "", "CidrBlock": "10.0.0.0/16", "_account": "default"},
+            {"VpcId": "vpc-2", "CidrBlock": "172.16.0.0/16", "_account": "default"},
+        ]
+        groups, vpc_map = detect_cidr_conflicts(vpcs)
+        assert groups == {"default": 0}
+        assert vpc_map == {"vpc-2": "default"}
+
 
 class TestAssignNetworkViewNames:
     def test_base_view(self):
@@ -140,6 +164,18 @@ class TestAssignNetworkViewNames:
         names = assign_network_view_names(groups, "cn-beijing", prefix="MyPrefix")
         assert names["default"] == "MyPrefix-cn-beijing"
         assert names["user-a"] == "MyPrefix-cn-beijing002"
+
+    def test_base_view_overrides_prefix_region(self):
+        groups = {"default": 0, "user-a": 1}
+        names = assign_network_view_names(
+            groups, "cn-hangzhou", base_view="LegacyView",
+        )
+        assert names["default"] == "LegacyView"
+        assert names["user-a"] == "LegacyView002"
+
+    def test_invalid_name_raises(self):
+        with pytest.raises(ValueError):
+            assign_network_view_names({"default": 0}, "bad region")
 
 
 class TestGroupResourcesByView:
@@ -203,14 +239,14 @@ class TestGroupResourcesByView:
         )
         assert views["Ali-cn-hangzhou"].ecs[0]["InstanceId"] == "i-1"
 
-    def test_unmatched_resource_uses_default(self):
+    def test_unmatched_resource_skipped(self):
         ecs = [{"InstanceId": "i-orphan"}]  # no VPC info
         group_view_map = {"default": "Ali-cn-hangzhou"}
         vpc_id_to_group = {}
         views = group_resources_by_view(
             [], [], ecs, group_view_map, vpc_id_to_group,
         )
-        assert views["Ali-cn-hangzhou"].ecs[0]["InstanceId"] == "i-orphan"
+        assert views == {}
 
 
 class TestResolveNetworkViews:

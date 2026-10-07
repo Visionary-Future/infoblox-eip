@@ -1,8 +1,5 @@
 """Unit tests for config.py — precedence resolution."""
 
-import os
-import pytest
-from unittest.mock import patch
 from config import _resolve
 
 

@@ -1,5 +1,6 @@
 # Example config for infoblox-eip. Copy to config.toml and fill in real values.
 # Precedence: CLI argument > config file > environment variable > built-in default.
+# This file contains credentials after you fill it in — keep it private: chmod 600 config.toml
 
 [aliyun]
 access_key_id = ""            # or env ALIYUN_ACCESS_KEY_ID
@@ -17,7 +18,7 @@ url = ""                      # or env INFOBLOX_URL, e.g. https://10.0.0.1
 user = ""                     # or env INFOBLOX_USER
 password = ""                 # or env INFOBLOX_PASSWORD
 wapi_version = "2.13.6"
-network_view = "default"
+network_view = "default"      # "default" = auto base view {prefix}-{region}; any other name wins as base view
 network_view_prefix = "Ali"   # prefix for auto-generated view names: {prefix}-{region}
 verify_ssl = true             # false skips SSL verification
 
