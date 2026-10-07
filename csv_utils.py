@@ -13,6 +13,12 @@ ECS_HEADER = [
     "EA-AliCloudFirstDiscovered",
     "EA-AliCloudLastDiscovered",
     "EA-AliCloudVPCID",
+    "EA-AliCloudVPCName",
+    "EA-AliCloudRegion",
+    "EA-AliCloudZone",
+    "EA-AliCloudSubnetID",
+    "EA-AliCloudSubnetName",
+    "EA-AliCloudTenantID",
 ]
 
 VPC_HEADER = [
