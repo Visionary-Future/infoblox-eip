@@ -79,6 +79,42 @@ class InfobloxWAPIClient:
             except Exception as e:
                 log.error(f"  ❌ 创建 EA '{name}' 失败: {e}")
 
+    # ── Network View management ────────────────
+
+    def ensure_network_view(self, view_name: str) -> bool:
+        """Create a Network View if it doesn't already exist.
+
+        Returns True if the view exists (or was created), False on error.
+        """
+        existing = self._search_native("networkview", {"name": view_name})
+        if existing:
+            log.info(f"  ⏭️  Network View '{view_name}' 已存在")
+            return True
+
+        try:
+            url = f"{self.api_base}/networkview"
+            resp = self.session.post(url, json={"name": view_name}, timeout=self.timeout)
+            if resp.status_code == 201:
+                log.info(f"  ✅ 创建 Network View '{view_name}'")
+                return True
+            if resp.status_code == 400 and "already exists" in resp.text.lower():
+                log.info(f"  ⏭️  Network View '{view_name}' 已存在")
+                return True
+            # Don't echo response bodies — they can contain IPAM topology.
+            err = ""
+            try:
+                err = resp.json().get("Error", "") or ""
+            except Exception:
+                pass
+            log.error(
+                f"  ❌ 创建 Network View '{view_name}' HTTP {resp.status_code}"
+                + (f": {err}" if err else "")
+            )
+            return False
+        except Exception as e:
+            log.error(f"  ❌ 创建 Network View '{view_name}' 失败: {e}")
+            return False
+
     def _post(self, object_type: str, payload: dict) -> Optional[str]:
         url = f"{self.api_base}/{object_type}"
         resp = self.session.post(url, json=payload, timeout=self.timeout)
@@ -97,7 +133,7 @@ class InfobloxWAPIClient:
                 msg = resp.text[:500]
             log.error(f"  ❌ POST {object_type} 400: {msg}")
             if "extensible" in msg.lower() or "attribute" in msg.lower():
-                log.error(f"  💡 请先在 Infoblox 中定义对应的 Extensible Attribute")
+                log.error("  💡 请先在 Infoblox 中定义对应的 Extensible Attribute")
             return None
         log.error(f"  ❌ POST {object_type} HTTP {resp.status_code}: {resp.text[:300]}")
         return None
@@ -217,8 +253,9 @@ class InfobloxWAPIClient:
         cidr_block: str,
         region: str = "",
         tenant_id: str = "",
+        network_view: Optional[str] = None,
     ) -> Optional[str]:
-
+        view = network_view or self.network_view
         comment = f"VPC: {vpc_name} ({vpc_id})"
 
         extattr_fields = {
@@ -230,12 +267,12 @@ class InfobloxWAPIClient:
 
         base_payload: Dict[str, Any] = {
             "network": cidr_block,
-            "network_view": self.network_view,
+            "network_view": view,
         }
 
         return self._upsert(
             "networkcontainer",
-            {"network": cidr_block, "network_view": self.network_view},
+            {"network": cidr_block, "network_view": view},
             comment, extattr_fields, base_payload,
         )
 
@@ -251,7 +288,9 @@ class InfobloxWAPIClient:
         region: str = "",
         zone: str = "",
         tenant_id: str = "",
+        network_view: Optional[str] = None,
     ) -> Optional[str]:
+        view = network_view or self.network_view
         comment = f"VSwitch: {vswitch_name} ({vswitch_id})"
 
         extattr_fields = {
@@ -265,12 +304,12 @@ class InfobloxWAPIClient:
 
         base_payload: Dict[str, Any] = {
             "network": cidr_block,
-            "network_view": self.network_view,
+            "network_view": view,
         }
 
         return self._upsert(
             "network",
-            {"network": cidr_block, "network_view": self.network_view},
+            {"network": cidr_block, "network_view": view},
             comment, extattr_fields, base_payload,
         )
 
@@ -291,11 +330,13 @@ class InfobloxWAPIClient:
         subnet_id: str = "",
         subnet_name: str = "",
         tenant_id: str = "",
+        network_view: Optional[str] = None,
     ) -> Optional[str]:
         """推送 ECS 实例为 fixedaddress 对象
 
         对齐 PPT slide 8 字段映射
         """
+        view = network_view or self.network_view
         if not private_ip:
             log.warning(f"  ⚠️  ECS {vm_id} has no private IP, skipped")
             return None
@@ -309,7 +350,7 @@ class InfobloxWAPIClient:
             for obj_type in ["network", "networkcontainer"]:
                 parent = self._search_native(
                     obj_type,
-                    {"network": cidr, "network_view": self.network_view},
+                    {"network": cidr, "network_view": view},
                 )
                 if parent:
                     parent_exists = True
@@ -338,7 +379,7 @@ class InfobloxWAPIClient:
 
         base_payload: Dict[str, Any] = {
             "ipv4addr": private_ip,
-            "network_view": self.network_view,
+            "network_view": view,
             "name": vm_name or f"vm-{vm_id}",
         }
         if mac_address:
@@ -348,6 +389,6 @@ class InfobloxWAPIClient:
 
         return self._upsert(
             "fixedaddress",
-            {"ipv4addr": private_ip, "network_view": self.network_view},
+            {"ipv4addr": private_ip, "network_view": view},
             comment, extattr_fields, base_payload,
         )
