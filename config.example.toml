@@ -18,6 +18,7 @@ user = ""                     # or env INFOBLOX_USER
 password = ""                 # or env INFOBLOX_PASSWORD
 wapi_version = "2.13.6"
 network_view = "default"
+network_view_prefix = "Ali"   # prefix for auto-generated view names: {prefix}-{region}
 verify_ssl = true             # false skips SSL verification
 
 [run]

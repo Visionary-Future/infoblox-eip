@@ -79,6 +79,41 @@ class InfobloxWAPIClient:
             except Exception as e:
                 log.error(f"  ❌ 创建 EA '{name}' 失败: {e}")
 
+    # ── Network View management ────────────────
+
+    def list_network_views(self) -> List[dict]:
+        """List all existing Network Views."""
+        try:
+            return self._get("networkview")
+        except Exception as e:
+            log.error(f"Failed to list network views: {e}")
+            return []
+
+    def ensure_network_view(self, view_name: str) -> bool:
+        """Create a Network View if it doesn't already exist.
+
+        Returns True if the view exists (or was created), False on error.
+        """
+        existing = self._search_native("networkview", {"name": view_name})
+        if existing:
+            log.info(f"  ⏭️  Network View '{view_name}' 已存在")
+            return True
+
+        try:
+            url = f"{self.api_base}/networkview"
+            resp = self.session.post(url, json={"name": view_name}, timeout=self.timeout)
+            if resp.status_code == 201:
+                log.info(f"  ✅ 创建 Network View '{view_name}'")
+                return True
+            if resp.status_code == 400 and "already exists" in resp.text.lower():
+                log.info(f"  ⏭️  Network View '{view_name}' 已存在")
+                return True
+            log.error(f"  ❌ 创建 Network View '{view_name}' HTTP {resp.status_code}: {resp.text[:200]}")
+            return False
+        except Exception as e:
+            log.error(f"  ❌ 创建 Network View '{view_name}' 失败: {e}")
+            return False
+
     def _post(self, object_type: str, payload: dict) -> Optional[str]:
         url = f"{self.api_base}/{object_type}"
         resp = self.session.post(url, json=payload, timeout=self.timeout)

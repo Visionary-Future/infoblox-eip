@@ -5,6 +5,7 @@ import sys
 
 from alicloud_utils import AliyunClient
 from config import load_config, merge_cli_config
+from conflict_resolver import resolve_network_views
 from csv_utils import read_csv, write_csv, ECS_HEADER, VPC_HEADER, VSWITCHE_HEADER
 from transform_fields_utils import transform_ecs_instances, transform_vpcs, transform_VSwitches
 
@@ -16,104 +17,136 @@ log = logging.getLogger("infoblox-eip")
 
 
 def push_to_infoblox(args, ecs_instances_raw, vpcs_raw, vswitches_raw):
+    """Push collected resources to Infoblox, sharded by Network View.
+
+    Uses CIDR conflict detection to assign resources to different Network Views.
+    For single-account (all VPC CIDRs unique), everything routes to the base view:
+    {prefix}-{region} (e.g. Ali-cn-hangzhou).
+    """
     from infoblox_wapi_client import InfobloxWAPIClient
 
+    prefix = getattr(args, "network_view_prefix", None) or "Ali"
+    region = args.region
+
+    # Annotate VPCs with _account for grouping (multi-account ready: set per-VPC)
+    for vpc in vpcs_raw:
+        if "_account" not in vpc:
+            vpc["_account"] = "default"
+
+    # Resolve resources into per-view groups
+    views = resolve_network_views(
+        vpcs_raw, vswitches_raw, ecs_instances_raw,
+        region=region, prefix=prefix,
+    )
+
+    if not views:
+        log.warning("No resources to push (empty views)")
+        return
+
+    # Create one client — reuse session, switch network_view per group
     client = InfobloxWAPIClient(
         base_url=args.infoblox_url,
         username=args.infoblox_user,
         password=args.infoblox_password,
         wapi_version=args.wapi_version,
-        network_view=args.network_view,
+        network_view="",  # overridden per-view below
         verify_ssl=not args.infoblox_no_verify_ssl,
     )
 
+    # EA definitions are global, only need to create once
     client.ensure_extattr_defs()
 
-    if vpcs_raw:
-        log.info(f"━━━ 推送 {len(vpcs_raw)} 个 VPC 到 Infoblox (networkcontainer) ━━━")
-        for vpc in vpcs_raw:
-            vpc_id = vpc.get("VpcId", "")
-            vpc_name = vpc.get("VpcName", "")
-            cidr_block = vpc.get("CidrBlock", "")
-            region = vpc.get("RegionId", "")
-            tenant = vpc.get("OwnerId") or vpc.get("OwnerAccount") or ""
-            if vpc_id and cidr_block:
-                try:
-                    client.push_vpc(
-                        vpc_id=vpc_id,
-                        vpc_name=vpc_name,
-                        cidr_block=cidr_block,
-                        region=region,
-                        tenant_id=tenant,
-                    )
-                except Exception as e:
-                    log.error(f"  ❌ VPC {vpc_id} push failed: {e}")
+    for view_name, group in views.items():
+        log.info(f"━━━ Network View: {view_name} ━━━")
+        client.network_view = view_name
+        client.ensure_network_view(view_name)
 
-    if vswitches_raw:
-        vpc_name_map = {v.get("VpcId", ""): v.get("VpcName", "") for v in vpcs_raw}
-        log.info(f"━━━ 推送 {len(vswitches_raw)} 个 VSwitch 到 Infoblox (network) ━━━")
-        for vsw in vswitches_raw:
-            vsw_id = vsw.get("VSwitchId", "")
-            vsw_name = vsw.get("VSwitchName", "")
-            cidr_block = vsw.get("CidrBlock", "")
-            vpc_id = vsw.get("VpcId", "")
-            vpc_name = vpc_name_map.get(vpc_id, "")
-            region = vsw.get("RegionId", "") or args.region
-            zone = vsw.get("ZoneId", "")
-            tenant = vsw.get("OwnerId") or vsw.get("OwnerAccount") or ""
-            if vsw_id and cidr_block:
-                try:
-                    client.push_vswitch(
-                        vswitch_id=vsw_id,
-                        vswitch_name=vsw_name,
-                        cidr_block=cidr_block,
-                        vpc_id=vpc_id,
-                        vpc_name=vpc_name,
-                        region=region,
-                        zone=zone,
-                        tenant_id=tenant,
-                    )
-                except Exception as e:
-                    log.error(f"  ❌ VSwitch {vsw_id} push failed: {e}")
+        _push_vpcs(client, group.vpcs)
+        _push_vswitches(client, group.vswitches, group.vpcs, region)
+        _push_ecs(client, group.ecs, group.vpcs, group.vswitches, region)
 
-    if ecs_instances_raw:
-        vpc_map = {v.get("VpcId", ""): v for v in vpcs_raw}
-        vswitch_map = {v.get("VSwitchId", ""): v for v in vswitches_raw}
-        log.info(f"━━━ 推送 {len(ecs_instances_raw)} 个 ECS 实例到 Infoblox (fixedaddress) ━━━")
-        for ecs in ecs_instances_raw:
-            vm_id = ecs.get("InstanceId", "")
-            vm_name = ecs.get("InstanceName") or ecs.get("HostName") or ""
+    log.info(f"Pushed to {len(views)} Network View(s): {list(views.keys())}")
 
-            # 提取私网 IP (复用 transform_fields_utils 的逻辑)
-            private_ip = _extract_private_ip(ecs)
-            public_ip = _extract_public_ip(ecs)
-            mac = _extract_mac(ecs)
-            os_name = ecs.get("OSName") or ecs.get("OSType") or ecs.get("Platform") or ecs.get("ImageId") or ""
-            vpc_attrs = ecs.get("VpcAttributes") or {}
-            vpc_id = vpc_attrs.get("VpcId") or ecs.get("VpcId") or ""
-            subnet_id = vpc_attrs.get("VSwitchId", "")
-            vpc = vpc_map.get(vpc_id, {})
-            vswitch = vswitch_map.get(subnet_id, {})
 
-            if vm_id:
-                try:
-                    client.push_ecs_instance(
-                        vm_id=vm_id,
-                        vm_name=vm_name,
-                        private_ip=private_ip,
-                        public_ip=public_ip,
-                        mac_address=mac,
-                        os_name=os_name,
-                        vpc_id=vpc_id,
-                        vpc_name=vpc.get("VpcName", ""),
-                        region=ecs.get("RegionId", "") or args.region,
-                        zone=ecs.get("ZoneId", ""),
-                        subnet_id=subnet_id,
-                        subnet_name=vswitch.get("VSwitchName", ""),
-                        tenant_id=vpc.get("OwnerId") or vpc.get("OwnerAccount") or "",
-                    )
-                except Exception as e:
-                    log.error(f"  ❌ ECS {vm_id} push failed: {e}")
+def _push_vpcs(client, vpcs):
+    if not vpcs:
+        return
+    log.info(f"  推送 {len(vpcs)} 个 VPC → networkcontainer")
+    for vpc in vpcs:
+        vpc_id = vpc.get("VpcId", "")
+        vpc_name = vpc.get("VpcName", "")
+        cidr_block = vpc.get("CidrBlock", "")
+        region = vpc.get("RegionId", "")
+        tenant = vpc.get("OwnerId") or vpc.get("OwnerAccount") or ""
+        if vpc_id and cidr_block:
+            try:
+                client.push_vpc(
+                    vpc_id=vpc_id, vpc_name=vpc_name,
+                    cidr_block=cidr_block, region=region, tenant_id=tenant,
+                )
+            except Exception as e:
+                log.error(f"  ❌ VPC {vpc_id} push failed: {e}")
+
+
+def _push_vswitches(client, vswitches, vpcs, region):
+    if not vswitches:
+        return
+    vpc_name_map = {v.get("VpcId", ""): v.get("VpcName", "") for v in vpcs}
+    log.info(f"  推送 {len(vswitches)} 个 VSwitch → network")
+    for vsw in vswitches:
+        vsw_id = vsw.get("VSwitchId", "")
+        vsw_name = vsw.get("VSwitchName", "")
+        cidr_block = vsw.get("CidrBlock", "")
+        vpc_id = vsw.get("VpcId", "")
+        vpc_name = vpc_name_map.get(vpc_id, "")
+        zone = vsw.get("ZoneId", "")
+        tenant = vsw.get("OwnerId") or vsw.get("OwnerAccount") or ""
+        if vsw_id and cidr_block:
+            try:
+                client.push_vswitch(
+                    vswitch_id=vsw_id, vswitch_name=vsw_name,
+                    cidr_block=cidr_block, vpc_id=vpc_id, vpc_name=vpc_name,
+                    region=vsw.get("RegionId", "") or region,
+                    zone=zone, tenant_id=tenant,
+                )
+            except Exception as e:
+                log.error(f"  ❌ VSwitch {vsw_id} push failed: {e}")
+
+
+def _push_ecs(client, ecs_instances, vpcs, vswitches, region):
+    if not ecs_instances:
+        return
+    vpc_map = {v.get("VpcId", ""): v for v in vpcs}
+    vswitch_map = {v.get("VSwitchId", ""): v for v in vswitches}
+    log.info(f"  推送 {len(ecs_instances)} 个 ECS → fixedaddress")
+    for ecs in ecs_instances:
+        vm_id = ecs.get("InstanceId", "")
+        vm_name = ecs.get("InstanceName") or ecs.get("HostName") or ""
+        private_ip = _extract_private_ip(ecs)
+        public_ip = _extract_public_ip(ecs)
+        mac = _extract_mac(ecs)
+        os_name = ecs.get("OSName") or ecs.get("OSType") or ecs.get("Platform") or ecs.get("ImageId") or ""
+        vpc_attrs = ecs.get("VpcAttributes") or {}
+        vpc_id = vpc_attrs.get("VpcId") or ecs.get("VpcId") or ""
+        subnet_id = vpc_attrs.get("VSwitchId", "")
+        vpc = vpc_map.get(vpc_id, {})
+        vswitch = vswitch_map.get(subnet_id, {})
+
+        if vm_id:
+            try:
+                client.push_ecs_instance(
+                    vm_id=vm_id, vm_name=vm_name,
+                    private_ip=private_ip, public_ip=public_ip, mac_address=mac,
+                    os_name=os_name, vpc_id=vpc_id,
+                    vpc_name=vpc.get("VpcName", ""),
+                    region=ecs.get("RegionId", "") or region,
+                    zone=ecs.get("ZoneId", ""),
+                    subnet_id=subnet_id,
+                    subnet_name=vswitch.get("VSwitchName", ""),
+                    tenant_id=vpc.get("OwnerId") or vpc.get("OwnerAccount") or "",
+                )
+            except Exception as e:
+                log.error(f"  ❌ ECS {vm_id} push failed: {e}")
 
 
 def _extract_private_ip(ecs: dict) -> str:
@@ -205,6 +238,8 @@ if __name__ == '__main__':
     parser.add_argument("--infoblox-password", type=str, default=None, help="Infoblox WAPI password")
     parser.add_argument("--wapi-version", type=str, default=None, help="WAPI version")
     parser.add_argument("--network-view", type=str, default=None, help="Infoblox network view")
+    parser.add_argument("--network-view-prefix", type=str, default=None,
+                        help="Network View name prefix for conflict resolution (default: Ali)")
     parser.add_argument("--infoblox-no-verify-ssl", action="store_true", default=None,
                         help="Skip SSL verification")
 
